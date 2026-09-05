@@ -57,7 +57,7 @@ function loopbackRequest(req: IncomingMessage): boolean {
  * a live billing answer whose failure degrades to `creditsError` rather than
  * failing the whole document.
  */
-export async function workBuddyWebStatus(
+export async function codeBuddyWebStatus(
   deps: CodeBuddyStatusRouteOptions,
 ): Promise<CodeBuddyWebStatus> {
   const authStatus = await deps.store.status()
@@ -102,7 +102,7 @@ export async function workBuddyWebStatus(
 }
 
 /** The status route's request handler, extracted so tests can mount it on a bare server. */
-export function workBuddyStatusHandler(
+export function codeBuddyStatusHandler(
   deps: CodeBuddyStatusRouteOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
@@ -115,7 +115,7 @@ export function workBuddyStatusHandler(
       return
     }
     try {
-      json(res, 200, await workBuddyWebStatus(deps))
+      json(res, 200, await codeBuddyWebStatus(deps))
     } catch (error: unknown) {
       json(res, 500, { error: safeMessage(error) })
     }
@@ -128,7 +128,7 @@ export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatus
     const dispose = ctx.webServer.register({
       kind: 'exact',
       path: CODEBUDDY_STATUS_PATH,
-      handler: workBuddyStatusHandler(deps),
+      handler: codeBuddyStatusHandler(deps),
     })
     return () => {
       dispose()

@@ -8,41 +8,40 @@
 
 - **开箱即用**：只要在本机用 CodeBuddy CLI 登录过一次，安装并启用插件后即可在 DSH 中直接使用，无需额外配置。
 - **登录跟随**：插件读取 CodeBuddy CLI 自己的认证文件（`CodeBuddyExtension/Data/Public/auth/Tencent-Cloud.coding-copilot.info`），在 CLI 里重新登录后自动跟随；同一目录里其他产品的 `.info` 文件（如桌面 IDE）会按 `lastLogin` 标记与文件新旧排序兜底。
-- **图片输入**：大部分模型支持发图，在对话里直接粘贴或拖入图片即可；少数只支持文字的模型会明确提示不支持。
-- **思考强度**：模型选择器里可为支持的模型切换思考强度，例如 GLM-5.3 可选 low / high / xhigh，GLM-5.3-Flash 可选 low / high / max；没有出现选项的模型使用上游默认档位。
-- **积分倍率与徽章**：模型名后直接显示积分倍率（如 `GLM-5.2 · x0.79`）与促销徽章（限时免费、夜间折扣），以服务端数据为准，每次启动 DSH 时同步。
-- **信息查看**：设置 → 插件 → DSH CodeBuddy CLI Connect 卡片，可查看账号信息、令牌有效期与剩余积分。
+- **图片输入**：大部分模型支持发图，在对话里直接粘贴或拖入图片即可；少数只支持文字的模型（如 GLM-5.1）会明确提示不支持。
+- **思考强度**：模型选择器里可为支持的模型切换思考强度，例如 GLM-5.3 可选 off / low / high / xhigh，GLM-5.3-Flash 可选 off / low / high / max。只有上游明确声明了档位清单的模型才会出现选项；没有出现选项的模型使用上游默认档位。
+- **积分倍率与徽章**：模型名后直接显示积分倍率（如 `GLM-5.2 · x0.79`）与促销徽章（限时免费、夜间折扣），以服务端数据为准，每次启动 DSH 时同步。倍率只是显示，不影响实际请求。
+- **信息查看**：设置 → 插件 → DSH CodeBuddy CLI Connect 卡片，可查看账号信息、令牌有效期、剩余积分，以及当前有优惠的模型。
 
 ## 安装
 
 前置：已安装 CodeBuddy CLI 并登录（插件复用 CLI 的登录状态，重新登录自动跟随）。
 
-- DSH `0.1.2-rc.1` 及以上：`dsh plugin --profile web add dsh-codebuddy-cli`
-- 从源码安装：`dsh plugin --profile web add github:<you>/dsh-codebuddy-cli`
-
-插件在三种 DSH 界面下均可运行：**Web**、**Desktop**、**TUI**，按 profile 选对应命令安装：
+本插件面向 **DSH `0.1.2-rc.1` 及以上**，与旧版核心（如 `0.1.1-rc.2`）不兼容。
 
 ```sh
 # Web（推荐，自带预构建产物）
 dsh plugin --profile web add dsh-codebuddy-cli
 dsh web
 
+# 或从 GitHub 源码安装
+dsh plugin --profile web add github:fu827707013/dsh-codebuddy-cli
+dsh web
+
 # Desktop（DSH Desktop 桌面版）
 dsh plugin --profile desktop add dsh-codebuddy-cli
 dsh --profile desktop
-
-# TUI（终端界面）
-dsh plugin --profile dsh-tui add dsh-codebuddy-cli
-dsh --profile dsh-tui
 ```
 
 安装后，在对应界面的模型选择器里切换到 CodeBuddy 模型即可使用；Web 下设置卡片可查看账号信息、令牌有效期与剩余积分，TUI 下可在 `/settings` 里配置 `authFile`。
+
+> **TUI 用户暂缓安装**：终端界面插件在 DSH 0.1.2 上的适配尚未完成，同类插件实测在 TUI 下安装会导致 DSH 启动崩溃（报 `events is not iterable`）。建议 TUI 用户等终端界面插件发布适配版本后再安装本插件。本插件已在 **Web** profile 下完整验证；Desktop 与 TUI 未做验证。
 
 ## 认证文件位置
 
 插件按以下顺序发现 CodeBuddy CLI 的登录态：
 
-1. 插件设置里配置的 `authFile` 路径（TUI/Web 设置卡片可改）；
+1. 插件设置里配置的 `authFile` 路径（Web 设置卡片、`/settings` 可改）；
 2. 环境变量 `CODEBUDDY_CLI_AUTH_FILE`；
 3. 平台默认认证目录（扫描目录内所有 `*.info`，优先 `Tencent-Cloud.coding-copilot.info`，其次 `lastLogin` 账号，再次最新写入的文件）：
    - Windows：`%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\`（旧版回退 `%APPDATA%`）
@@ -54,12 +53,20 @@ dsh --profile dsh-tui
 
 ## 命令行
 
-`dsh plugin --profile <web|desktop|dsh-tui> exec dsh-codebuddy-cli status`：登录状态与剩余积分（`--json` 输出机器可读格式；另有 `doctor` 诊断、`logout` 清理插件侧凭据副本）。
+```sh
+dsh plugin --profile <web|desktop|dsh-tui> exec dsh-codebuddy-cli status          # 登录状态与剩余积分
+dsh plugin --profile web exec dsh-codebuddy-cli status --json                     # 机器可读输出
+dsh plugin --profile web exec dsh-codebuddy-cli doctor                            # 无密钥的环境诊断
+dsh plugin --profile web exec dsh-codebuddy-cli logout                            # 清除插件侧凭据副本
+```
+
+`doctor` 会一并报告认证文件是否存在、宿主 bundle 进程是否存活（pid），并给出下一步提示；`logout` 只删除插件自己的凭据副本，CodeBuddy CLI 的登录态不受影响。
 
 ## 已知限制
 
-- 在 Windows 的 DSH Web profile（`0.1.2-rc.1`+、Node 22+）下验证通过；WSL 需保证 Windows 环境变量可见，否则请用 `CODEBUDDY_CLI_AUTH_FILE` 指定实际位置。
+- 在 **Windows** 的 DSH Web profile（`0.1.2-rc.1`+、Node 22+）下验证通过；macOS / Linux 走同样的目录探测逻辑但未做实测。WSL 需保证 Windows 环境变量可见，否则请用 `CODEBUDDY_CLI_AUTH_FILE` 指定实际位置。
 - 依赖 CodeBuddy CLI 的客户端接口（非官方开放 API），CLI 更新后插件可能需要随之调整。
+- 模型清单以每次启动 DSH 时拉取的服务端数据为准；拉取失败时回退到内置的静态清单（15 个模型），保证首次进入即可选模型。
 
 ## 免责声明
 

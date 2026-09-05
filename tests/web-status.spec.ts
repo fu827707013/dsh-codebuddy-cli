@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CodeBuddyCredentialStore } from '../src/auth.ts'
-import { workBuddyStatusHandler } from '../src/web-status.ts'
+import { codeBuddyStatusHandler } from '../src/web-status.ts'
 import { CODEBUDDY_STATUS_PATH } from '../src/status-paths.ts'
 import type { CodeBuddyStatusRouteOptions } from '../src/web-status.ts'
 
@@ -61,7 +61,7 @@ async function startStatusServer(): Promise<number> {
     client: { fetchCredits: async () => ({ total: 0, accounts: [] }) },
     models: () => [],
   }
-  const server = createServer(workBuddyStatusHandler(deps))
+  const server = createServer(codeBuddyStatusHandler(deps))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const { port } = server.address() as { port: number }
   CLEANUP.push(() => new Promise<void>(resolve => server.close(() => resolve())))
