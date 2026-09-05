@@ -5,6 +5,7 @@ import {
   creditRowPercent,
   currentCodeBuddyRate,
   formatCompactCredits,
+  isCodeBuddySelection,
 } from '../src/client/credit-line.ts'
 import type { CodeBuddyModelSelectionProjection } from '../src/client/credit-line.ts'
 
@@ -105,6 +106,40 @@ describe('currentCodeBuddyRate', () => {
 
   it('returns null while the projection has not landed yet', () => {
     expect(currentCodeBuddyRate(undefined, catalog)).toBeNull()
+  })
+})
+
+describe('isCodeBuddySelection', () => {
+  it('shows for a CodeBuddy next selection', () => {
+    const selection: CodeBuddyModelSelectionProjection = {
+      lastUsed: { provider: 'deepseek', model: 'deepseek-chat' },
+      next: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
+    }
+    expect(isCodeBuddySelection(selection)).toBe(true)
+  })
+
+  it('hides when next points at another provider, even if lastUsed was CodeBuddy', () => {
+    const selection: CodeBuddyModelSelectionProjection = {
+      lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
+      next: { provider: 'deepseek', model: 'deepseek-chat' },
+    }
+    expect(isCodeBuddySelection(selection)).toBe(false)
+  })
+
+  it('falls back to lastUsed when next is empty', () => {
+    expect(isCodeBuddySelection({
+      lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
+      next: null,
+    })).toBe(true)
+    expect(isCodeBuddySelection({
+      lastUsed: { provider: 'deepseek', model: 'deepseek-chat' },
+      next: null,
+    })).toBe(false)
+  })
+
+  it('hides while the projection is absent or carries no selection', () => {
+    expect(isCodeBuddySelection(undefined)).toBe(false)
+    expect(isCodeBuddySelection({ lastUsed: null, next: null })).toBe(false)
   })
 })
 

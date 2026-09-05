@@ -16,7 +16,7 @@ import type { CSSProperties } from 'react'
 import type { UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
 import { CODEBUDDY_STATUS_PATH } from '../status-paths.ts'
 import type { CodeBuddyWebStatus } from '../status-paths.ts'
-import { buildCreditLine, currentCodeBuddyRate } from './credit-line.ts'
+import { buildCreditLine, currentCodeBuddyRate, isCodeBuddySelection } from './credit-line.ts'
 import type { CodeBuddyModelSelectionProjection } from './credit-line.ts'
 import type { CodeBuddyCreditKey } from './locales.ts'
 
@@ -177,10 +177,28 @@ function PackageRow({ account, t }: {
   )
 }
 
-/** The composer dock entry: compact credit line + click-open details panel. */
+/**
+ * The composer dock entry: a pure provider gate around {@link CreditDockBody}.
+ *
+ * The gate holds no state and starts no work — it only reads the session's
+ * `modelSelection` projection. The body (which fetches, polls and binds
+ * document listeners) is mounted only for a CodeBuddy selection, so switching
+ * the session to another provider unmounts it and its effects clean up: no
+ * further status requests, no interval, no leftover panel.
+ */
 export function CodeBuddyCreditDock({ useProjection, useSession, t }: CodeBuddyCreditDockProps) {
   if (t === undefined) throw new Error('CodeBuddy credit dock requires its translation function')
-  const selection = useProjection('modelSelection') as CodeBuddyModelSelectionProjection
+  const selection = useProjection('modelSelection') as CodeBuddyModelSelectionProjection | undefined
+  if (!isCodeBuddySelection(selection)) return null
+  return <CreditDockBody selection={selection} useSession={useSession} t={t} />
+}
+
+/** The dock's stateful half, mounted only while a CodeBuddy model is selected. */
+function CreditDockBody({ selection, useSession, t }: {
+  selection: CodeBuddyModelSelectionProjection | undefined
+  useSession: CodeBuddyCreditDockProps['useSession']
+  t: CodeBuddyCreditDockInjected['t']
+}): React.ReactNode {
   const running = useSession(snapshot => snapshot.running)
   const [load, setLoad] = useState<Load>({ phase: 'loading' })
   const [open, setOpen] = useState(false)

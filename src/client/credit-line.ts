@@ -92,20 +92,44 @@ export function buildCreditLine(credits: CodeBuddyDockCredits | undefined): Code
 }
 
 /**
+ * The selection the composer is about to use: `next` wins over `lastUsed` —
+ * it is the selection the next request will use, which is the one the user
+ * just picked. An absent projection (no model chosen yet in this session, or
+ * the projection has not landed) resolves to null.
+ *
+ * Both the dock's provider gate and {@link currentCodeBuddyRate} read through
+ * this one helper so the two cannot drift apart on which selection counts.
+ */
+export function currentModelSelection(
+  selection: CodeBuddyModelSelectionProjection | undefined,
+): CodeBuddyModelSelection | null {
+  return selection?.next ?? selection?.lastUsed ?? null
+}
+
+/**
+ * Whether the session's current selection belongs to this plugin's provider.
+ *
+ * The whole dock is gated on this: the line advertises CodeBuddy spending, so
+ * a WorkBuddy / DeepSeek session has nothing to show and must not even ask the
+ * status route for credit. False while the projection is missing or carries no
+ * selection at all.
+ */
+export function isCodeBuddySelection(selection: CodeBuddyModelSelectionProjection | undefined): boolean {
+  return currentModelSelection(selection)?.provider === CODEBUDDY_PROVIDER_ID
+}
+
+/**
  * Resolve the currently selected CodeBuddy model's billing rate and name.
  *
- * The dock renders nothing for a foreign provider: the line advertises
- * CodeBuddy spending, and a WorkBuddy / DeepSeek session has no CodeBuddy
- * credits to show. `next` wins over `lastUsed` — it is the selection the next
- * request will use, which is the one the user just picked. An absent
- * projection (no model chosen yet in this session) resolves to null.
+ * Returns null for a foreign provider, an unknown model, or an absent
+ * catalog — the panel then omits the rate row rather than guessing.
  */
 export function currentCodeBuddyRate(
   selection: CodeBuddyModelSelectionProjection | undefined,
   catalog: CodeBuddyWebRateMap | undefined,
 ): { rate: string; name: string | undefined } | null {
-  const current = selection?.next ?? selection?.lastUsed ?? null
-  if (current === null || current.provider !== CODEBUDDY_PROVIDER_ID) return null
+  const current = currentModelSelection(selection)
+  if (current === null || !isCodeBuddySelection(selection)) return null
   const rate = catalog?.rates[current.model]
   if (rate === undefined) return null
   return { rate, name: catalog?.names[current.model] }
