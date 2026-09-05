@@ -1,0 +1,213 @@
+/**
+ * CodeBuddy models for DeepSeek Harness, reusing the CodeBuddy CLI's
+ * sign-in. Registers the `codebuddy-cli` provider; streaming, tool calls,
+ * compaction, and permissions stay Harness-owned.
+ * @module dsh-codebuddy-cli
+ */
+
+import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
+import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-attachment'
+import { CodeBuddyCredentialStore } from './auth.ts'
+import { CodeBuddyCatalog } from './catalog.ts'
+import { createCodeBuddyAdapter, CODEBUDDY_PROVIDER } from './adapter.ts'
+import { createCodeBuddyShim } from './shim.ts'
+import { CodeBuddyUpstreamClient } from './upstream.ts'
+import { registerCodeBuddyStatusRoute } from './web-status.ts'
+import { clearHostHeartbeat, writeHostHeartbeat } from './host-heartbeat.ts'
+
+export { CODEBUDDY_PROVIDER, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, createCodeBuddyAdapter, type CodeBuddyAdapter } from './adapter.ts'
+export { createCodeBuddyShim, type CodeBuddyShim } from './shim.ts'
+export {
+  FALLBACK_CODEBUDDY_MODELS,
+  CodeBuddyCatalog,
+  type CodeBuddyModelInfo,
+} from './catalog.ts'
+export {
+  defaultAuthDirCandidates,
+  defaultAuthDir,
+  parseCodeBuddyAuth,
+  CODEBUDDY_AUTH_FILE_ENV,
+  CODEBUDDY_AUTH_FILENAME,
+  CodeBuddyCredentialStore,
+  codebuddyOwnAuthPath,
+  type CodeBuddyAuthStatus,
+  type CodeBuddyCredential,
+} from './auth.ts'
+export {
+  classifyUpstreamError,
+  normalizeCredits,
+  prepareChatBody,
+  regionOf,
+  CodeBuddyUpstreamClient,
+  type UpstreamErrorKind,
+  type CodeBuddyChatResult,
+  type CodeBuddyCredits,
+  type CodeBuddyEffort,
+  type CodeBuddyModelBilling,
+  type CodeBuddyModelReasoning,
+  type CodeBuddyRefreshOutcome,
+  type CodeBuddyUpstreamModel,
+} from './upstream.ts'
+export {
+  CODEBUDDY_HOST_HEARTBEAT_FILENAME,
+  clearHostHeartbeat,
+  isHeartbeatProcessAlive,
+  processStartTimeMs,
+  readHostHeartbeat,
+  codebuddyHostHeartbeatPath,
+  type CodeBuddyHostHeartbeat,
+} from './host-heartbeat.ts'
+
+/** Stable Cordis plugin name. */
+export const name = 'llm-codebuddy-cli'
+
+/** The model registry required before the provider can register. */
+export const inject = ['llm']
+
+/**
+ * Settings namespace owning the configuration card.
+ *
+ * DSH 0.1.2 dropped the `settingsNamespace()` branding function: a namespace is
+ * now a nominal string, validated by the type system where it is used rather
+ * than at runtime by a function call. The brand is compile-time only, so this
+ * stays the plain string it always was — every comparison, descriptor lookup,
+ * and `dsh` config file still sees `'codebuddy-cli'`. It is cast once here so the
+ * public constant carries the seam's type without pulling the brand helper
+ * into this package (upstream DSH plugins, `dsh-llm-pi-ai` included, pass
+ * their namespaces as plain string literals).
+ */
+export const CODEBUDDY_SETTINGS_NS = 'codebuddy-cli' as SettingsNamespace
+
+/** Plugin configuration. */
+export interface Config {
+  /** Explicit CodeBuddy CLI auth-file path, overriding env and platform defaults. */
+  authFile?: string
+}
+
+export const Config: z<Config> = z.object({
+  authFile: z.string().description('CodeBuddy CLI auth file (defaults to the CLI\'s own location)'),
+})
+
+/**
+ * Start the loopback endpoint, register the `codebuddy` provider, and
+ * refresh the model catalog from the upstream once credentials allow it.
+ * The static fallback catalog serves from the first moment, so an offline
+ * upstream never leaves the provider empty.
+ */
+export function apply(ctx: Context, config: Config): void {
+  const client = new CodeBuddyUpstreamClient()
+  const store = new CodeBuddyCredentialStore({
+    ...config.authFile === undefined ? {} : { cliPath: config.authFile },
+    refresh: credential => client.refreshToken(credential),
+  })
+  const catalog = new CodeBuddyCatalog()
+  const shim = createCodeBuddyShim({ store, client, catalog, logger: ctx.logger })
+
+  // Same-origin status route backing the Plugin-configuration card; the
+  // webServer service is optional (a headless profile serves no browser).
+  ctx.inject(['webServer'], webCtx => registerCodeBuddyStatusRoute(webCtx, { store, client, models: () => catalog.current() }))
+
+  // The settings section is what makes the provider visible on the Models
+  // settings page (settings.describe joins the provider directory), and it
+  // keeps the configured auth-file path live across edits.
+  //
+  // DSH 0.1.2 moved the helper from a free function (`installSettingsSection`)
+  // onto the provider service (`settings.installSection`), so the wiring now
+  // has to wait for a settings service to exist — exactly what the inject
+  // below does. Without one the plugin still serves its models; it simply has
+  // no user-editable section, as before.
+  let current = () => config
+  ctx.inject(['settings'], settingsCtx => {
+    settingsCtx.settings.installSection(ctx, CODEBUDDY_SETTINGS_NS, Config, config, {
+      setSource(source) { current = source },
+      onChange() {
+        const next = current().authFile
+        store.setCliPath(next)
+      },
+    })
+  })
+
+  let stopped = false
+  ctx.effect(() => () => {
+    stopped = true
+    void shim.close()
+    void clearHostHeartbeat()
+  })
+
+  void shim.ready
+    .then(() => {
+      if (stopped) return
+
+      let invalidate: (() => void) | undefined
+      try {
+        // Constructed only once the listener holds a port: the provider's
+        // models read the shim origin at construction time.
+        const codebuddy = createCodeBuddyAdapter({
+          shim,
+          store,
+          catalog,
+          resolveAttachments: () => ctx.get('attachments'),
+        })
+        invalidate = codebuddy.invalidate
+
+        let releaseAdapter: (() => void) | undefined
+        let releaseDirectory: (() => void) | undefined
+        try {
+          releaseAdapter = ctx.llm.registerAdapter([CODEBUDDY_PROVIDER], codebuddy.adapter)
+          releaseDirectory = ctx.llm.registerConfigurableProviders([{
+            provider: CODEBUDDY_PROVIDER,
+            displayName: 'CodeBuddy',
+            settingsNs: CODEBUDDY_SETTINGS_NS,
+            settingsPath: [],
+            declared: false,
+          }])
+        } finally {
+          if (releaseAdapter === undefined || releaseDirectory === undefined) {
+            // Registration threw; release whichever half landed.
+            releaseAdapter?.()
+            releaseDirectory?.()
+          }
+        }
+        try {
+          ctx.effect(() => () => {
+            releaseAdapter?.()
+            releaseDirectory?.()
+          })
+        } catch {
+          // The plugin was disposed during registration; release immediately —
+          // the plugin-level disposer already closed the shim.
+          releaseAdapter?.()
+          releaseDirectory?.()
+        }
+
+        // The host bundle is live: write a heartbeat so the status CLI can
+        // report host health without a browser. Cleared on disposal; a stale
+        // heartbeat after a crash is detected by PID in the reader.
+        void writeHostHeartbeat()
+      } catch (error: unknown) {
+        ctx.logger.error('dsh-codebuddy-cli: provider registration failed', error)
+        return
+      }
+
+      void (async () => {
+        try {
+          const credential = await store.current()
+          if (credential === undefined || stopped) return
+          const models = await client.fetchModels(credential)
+          if (stopped) return
+          catalog.set([...models])
+          invalidate?.()
+        } catch (error: unknown) {
+          ctx.logger.warn(
+            'dsh-codebuddy-cli: dynamic model catalog unavailable; serving the static fallback list',
+            error,
+          )
+        }
+      })()
+    })
+    .catch((error: unknown) => {
+      ctx.logger.error('dsh-codebuddy-cli: loopback endpoint failed to start; provider not registered', error)
+    })
+}

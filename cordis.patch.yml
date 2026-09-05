@@ -1,0 +1,6 @@
+# Register the CodeBuddy provider without changing the profile's current
+# default model. The plugin reuses the CodeBuddy CLI's sign-in; no
+# separate OAuth flow is started.
+- insert:
+    - id: llm-codebuddy-cli
+      name: dsh-codebuddy-cli

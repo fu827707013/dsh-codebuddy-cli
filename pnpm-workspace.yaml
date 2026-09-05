@@ -1,0 +1,10 @@
+packages:
+  - .
+
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false
+
+ignoredBuiltDependencies:
+  - "@google/genai"
+  - "protobufjs"
