@@ -22,7 +22,6 @@
     "dsh-codebuddy-cli": "lib/bin.js"
   },
   "scripts": {
-    "prepack": "npm run build",
     "build": "tsdown",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
