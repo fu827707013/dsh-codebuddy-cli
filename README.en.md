@@ -11,6 +11,7 @@ Reuse the CodeBuddy CLI (CodeBuddy Code) sign-in to bring its models (GLM-5.3, G
 - **Image input**: most models accept images — paste or drag one into the conversation; text-only models (e.g. GLM-5.1) report clearly that they do not support images.
 - **Thinking effort**: supported models expose a thinking-level selector (GLM-5.3 offers off / low / high / xhigh, GLM-5.3-Flash offers off / low / high / max). The control appears only for models whose upstream catalog declares an effort list; models without the selector use the upstream default.
 - **Credits and badges**: the billing multiplier (e.g. `GLM-5.2 · x0.79`) and promo badges ride the model name, synced from the server on every DSH start. Display only — it never affects the request that is sent.
+- **In-chat credit line**: a compact credit figure lives right below the composer box (next to the session stats strip), e.g. `Credits 1.2K`, with the selected CodeBuddy model's billing rate appended when applicable (e.g. `Credits 1.2K · x0.79`). Click it for a details panel: total credit, per-package progress rows, the current model's rate, and a manual refresh. The line hides itself for sessions on non-CodeBuddy models.
 - **Status card**: Settings → Plugins → DSH CodeBuddy CLI Connect shows the account, token expiry, remaining credit, and the models currently on a promo.
 
 ## Install
