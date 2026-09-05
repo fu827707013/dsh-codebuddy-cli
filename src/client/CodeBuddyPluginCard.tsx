@@ -5,8 +5,8 @@ import type { CSSProperties } from 'react'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
-import { CODEBUDDY_STATUS_PATH } from '../status-paths.ts'
-import type { CodeBuddyWebModelBadge, CodeBuddyWebStatus } from '../status-paths.ts'
+import { CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH } from '../status-paths.ts'
+import type { CodeBuddyWebModelBadge, CodeBuddyWebModelSelection, CodeBuddyWebStatus } from '../status-paths.ts'
 import type { CodeBuddySettingsKey } from './locales.ts'
 import css from './CodeBuddyPluginCard.module.css'
 
@@ -58,6 +58,53 @@ function formatTime(ms: number): string {
 
 function progressFillStyle(percent: number): CSSProperties {
   return { width: `${Math.max(0, Math.min(100, percent))}%` }
+}
+
+/**
+ * One collapsible body section: a summary line that always shows, and detail
+ * that folds away.
+ *
+ * The card body carries three lists whose length is set by the account, not by
+ * the design — 12 credit packages and 15 catalog models on this machine — so an
+ * always-expanded body scrolled past everything else in Plugin configuration.
+ * The summary stays outside the fold on purpose: the credit total is the one
+ * figure worth reading at a glance, and hiding it behind a chevron would trade
+ * one problem for a worse one.
+ *
+ * The disclosure is a real button with `aria-expanded`, and the detail is simply
+ * absent while collapsed rather than hidden with CSS, so assistive tech and tab
+ * order agree with what is on screen.
+ */
+function Section({ heading, summary, defaultOpen = false, expandLabel, collapseLabel, children }: {
+  heading: string
+  /** Always-visible right-hand summary, e.g. the credit total. */
+  summary?: React.ReactNode
+  defaultOpen?: boolean
+  expandLabel: string
+  collapseLabel: string
+  children: React.ReactNode
+}): React.ReactNode {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className={css.section}>
+      <div className={css.bodyRow}>
+        <button
+          type="button"
+          className={css.sectionToggle}
+          aria-expanded={open}
+          aria-label={`${open ? collapseLabel : expandLabel}: ${heading}`}
+          onClick={() => { setOpen(!open) }}
+        >
+          <IconChevronDownOutline14
+            className={open ? cx(css.sectionChevron, css.sectionChevronOpen) : cx(css.sectionChevron)}
+          />
+          <span className={css.sectionHeading}>{heading}</span>
+        </button>
+        {summary === undefined ? null : <span className={css.bodyText}>{summary}</span>}
+      </div>
+      {open ? children : null}
+    </div>
+  )
 }
 
 function statusDotClass(status: CodeBuddyWebStatus['status']): string {
@@ -120,6 +167,172 @@ function ModelOfferRow({ model, t }: {
         </span>
       </div>
       {model.credits === undefined ? null : <span className={css.bodyText}>{t('rate', { rate: model.credits })}</span>}
+    </div>
+  )
+}
+
+/**
+ * The enabled-model checkbox list.
+ *
+ * The draft lives here rather than in the parent's status state because the
+ * card polls the status route every minute while open: folding the selection
+ * into that polled document would overwrite a half-made choice each time a poll
+ * landed. The draft seeds from the Host's answer, survives polls, and is
+ * re-seeded only when the user saves or the Host's own selection changes.
+ */
+function ModelSelection({ selection, onSaved, t }: {
+  selection: CodeBuddyWebModelSelection
+  /** Ask the card to re-read the status document after a landed write. */
+  onSaved?: () => void
+  t: CodeBuddyPluginCardInjected['t']
+}): React.ReactNode {
+  // The Host's selection as a stable key: a poll that reports the same
+  // selection must not disturb a draft, while an actual change re-seeds it.
+  const hostKey = selection.choices.filter(choice => choice.enabled).map(choice => choice.id).join(',')
+  const [draft, setDraft] = useState<readonly string[]>(() =>
+    selection.choices.filter(choice => choice.enabled).map(choice => choice.id))
+  const [seeded, setSeeded] = useState(hostKey)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  // The Host key this card's own last write should produce. Without it, the
+  // re-seed below would clear the "saved" note the instant the write landed —
+  // the confirmation would flash and vanish on the refresh that proves it
+  // worked. A key that arrives without matching this is somebody else's edit.
+  const [savedKey, setSavedKey] = useState<string | undefined>(undefined)
+  const [error, setError] = useState<string | undefined>(undefined)
+
+  if (seeded !== hostKey) {
+    // Re-seed from a genuinely changed Host answer (another surface wrote the
+    // section, or our own save landed) during render, so the list never shows a
+    // draft that the document already contradicts.
+    setSeeded(hostKey)
+    setDraft(selection.choices.filter(choice => choice.enabled).map(choice => choice.id))
+    setSaved(hostKey === savedKey)
+  }
+
+  const checked = new Set(draft)
+  // Saving an all-checked list would freeze today's roster into an allowlist,
+  // so "everything" is stored as the empty (unrestricted) selection instead —
+  // new upstream models then appear on their own.
+  const all = selection.choices.length
+  const wire: readonly string[] = draft.length === all ? [] : draft
+  const stored = selection.choices.filter(choice => choice.enabled).map(choice => choice.id)
+  const dirty = selection.restricted
+    ? draft.length !== stored.length || draft.some(id => !stored.includes(id))
+    : draft.length !== all
+
+  const toggle = (id: string): void => {
+    setSaved(false)
+    setError(undefined)
+    setDraft(current => current.includes(id) ? current.filter(entry => entry !== id) : [...current, id])
+  }
+
+  const save = async (): Promise<void> => {
+    setSaving(true)
+    setError(undefined)
+    try {
+      const response = await fetch(CODEBUDDY_MODELS_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ enabledModels: wire }),
+      })
+      if (!response.ok) {
+        const detail: unknown = await response.json().catch(() => undefined)
+        const message = typeof (detail as { error?: unknown } | undefined)?.error === 'string'
+          ? (detail as { error: string }).error
+          : `HTTP ${String(response.status)}`
+        throw new Error(message)
+      }
+      // The write route answers with the resulting selection, so the key this
+      // save will produce is read from the Host's own answer rather than
+      // predicted from the draft.
+      const body: unknown = await response.json().catch(() => undefined)
+      const landed = (body as { selection?: CodeBuddyWebModelSelection } | undefined)?.selection
+      setSavedKey(landed === undefined
+        ? undefined
+        : landed.choices.filter(choice => choice.enabled).map(choice => choice.id).join(','))
+      setSaved(true)
+      // Re-read the status document now: the card otherwise polls once a minute,
+      // which left the save button live and the confirmation missing until the
+      // next tick even though the write had landed.
+      onSaved?.()
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : t('requestFailed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const disabled = !selection.writable || saving
+  // The heading and the enabled/total count belong to the enclosing Section's
+  // always-visible summary line, so this body starts at the hint.
+  return (
+    <div className={css.quotaList}>
+      <p className={css.bodyText} style={{ margin: 0 }}>
+        {selection.restricted ? t('optionalModelsHint') : t('optionalModelsAllHint')}
+      </p>
+      <div className={css.choiceList}>
+        {selection.choices.map(choice => (
+          <label
+            key={choice.id}
+            className={disabled ? cx(css.choiceRow, css.choiceRowDisabled) : cx(css.choiceRow)}
+          >
+            <input
+              type="checkbox"
+              className={css.choiceBox}
+              checked={checked.has(choice.id)}
+              disabled={disabled}
+              onChange={() => { toggle(choice.id) }}
+            />
+            <span className={css.choiceName}>{choice.name}</span>
+            <span className={css.choiceMeta}>
+              {choice.badges?.map(badge => (
+                <span key={badge} className={css.badge}>{modelBadgeLabel(badge, t)}</span>
+              ))}
+              {choice.credits === undefined ? null : <span>{choice.credits}</span>}
+            </span>
+          </label>
+        ))}
+      </div>
+      <div className={css.choiceActions}>
+        <button
+          type="button"
+          className={css.choiceSave}
+          disabled={disabled || !dirty}
+          onClick={() => { void save() }}
+        >
+          {saving ? t('optionalModelsSaving') : t('optionalModelsSave')}
+        </button>
+        <button
+          type="button"
+          className={css.refresh}
+          disabled={disabled || draft.length === all}
+          onClick={() => {
+            setSaved(false)
+            setDraft(selection.choices.map(choice => choice.id))
+          }}
+        >
+          {t('optionalModelsSelectAll')}
+        </button>
+        <button
+          type="button"
+          className={css.refresh}
+          disabled={disabled || draft.length === 0}
+          onClick={() => {
+            setSaved(false)
+            setDraft([])
+          }}
+        >
+          {t('optionalModelsClear')}
+        </button>
+        {saved && !dirty ? <span className={css.bodyText} style={{ margin: 0 }}>{t('optionalModelsSaved')}</span> : null}
+      </div>
+      {!selection.writable ? <p className={css.bodyText}>{t('optionalModelsReadOnly')}</p> : null}
+      {selection.writable && draft.length === 0
+        ? <p className={css.bodyText}>{t('optionalModelsEmptyWarning')}</p>
+        : null}
+      {error === undefined ? null : <p className={css.bodyError}>{t('optionalModelsSaveFailed', { message: error })}</p>}
     </div>
   )
 }
@@ -219,32 +432,63 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
                 ? <>
                     {status.expiresAt === undefined ? null
                       : <p className={css.bodyText}>{t('accessTokenExpires', { time: formatTime(status.expiresAt) })}</p>}
+                    {/* Model selection leads the body: it is the only block
+                        here the user acts on, so it sits above the read-only
+                        credit and promo reports rather than below them. */}
+                    {status.selection === undefined ? null : (
+                      <Section
+                        heading={t('optionalModelsHeading')}
+                        summary={t('optionalModelsCount', {
+                          enabled: String(status.selection.choices.filter(choice => choice.enabled).length),
+                          total: String(status.selection.choices.length),
+                        })}
+                        expandLabel={t('expand')}
+                        collapseLabel={t('collapse')}
+                      >
+                        <ModelSelection
+                          selection={status.selection}
+                          onSaved={() => { void refresh() }}
+                          t={t}
+                        />
+                      </Section>
+                    )}
                     {status.credits === undefined ? null : (
-                      <div className={css.quotaList}>
-                        <div className={css.bodyRow}>
-                          <h3 style={quotaTitleStyle}>{t('creditsHeading')}</h3>
-                          <span className={css.bodyText}>{t('creditsTotal', { total: formatNumber(status.credits.total) })}</span>
+                      <Section
+                        heading={t('creditsHeading')}
+                        // The total rides the summary line, so it stays readable
+                        // while the twelve package bars behind it stay folded.
+                        summary={t('creditsTotal', { total: formatNumber(status.credits.total) })}
+                        expandLabel={t('expand')}
+                        collapseLabel={t('collapse')}
+                      >
+                        <div className={css.quotaList}>
+                          {status.credits.accounts
+                            .filter(account => account.remain > 0)
+                            .map((account, index) => (
+                            <CreditBar
+                              key={`${account.packageName}-${String(index)}`}
+                              label={account.packageName}
+                              remain={account.remain}
+                              size={account.size}
+                              t={t}
+                            />
+                          ))}
                         </div>
-                        {status.credits.accounts
-                          .filter(account => account.remain > 0)
-                          .map((account, index) => (
-                          <CreditBar
-                            key={`${account.packageName}-${String(index)}`}
-                            label={account.packageName}
-                            remain={account.remain}
-                            size={account.size}
-                            t={t}
-                          />
-                        ))}
-                      </div>
+                      </Section>
                     )}
                     {status.creditsError === undefined ? null
                       : <p className={css.bodyError}>{t('creditsError', { message: status.creditsError })}</p>}
                     {status.models === undefined || status.models.length === 0 ? null : (
-                      <div className={css.quotaList}>
-                        <h3 style={quotaTitleStyle}>{t('modelsHeading')}</h3>
-                        {status.models.map(model => <ModelOfferRow key={model.id} model={model} t={t} />)}
-                      </div>
+                      <Section
+                        heading={t('modelsHeading')}
+                        summary={t('modelsOnPromo', { count: String(status.models.length) })}
+                        expandLabel={t('expand')}
+                        collapseLabel={t('collapse')}
+                      >
+                        <div className={css.quotaList}>
+                          {status.models.map(model => <ModelOfferRow key={model.id} model={model} t={t} />)}
+                        </div>
+                      </Section>
                     )}
                   </>
                 : null}

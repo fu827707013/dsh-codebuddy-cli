@@ -15,6 +15,7 @@ import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type { CodeBuddyCredentialStore } from './auth.ts'
+import { filterEnabledModels } from './catalog.ts'
 import type { CodeBuddyCatalog, CodeBuddyModelInfo } from './catalog.ts'
 import type { CodeBuddyShim } from './shim.ts'
 import { normalizeCredits } from './upstream.ts'
@@ -118,6 +119,13 @@ export interface CodeBuddyAdapterOptions {
   shim: CodeBuddyShim
   store: CodeBuddyCredentialStore
   catalog: CodeBuddyCatalog
+  /**
+   * Read the user's enabled-model allowlist at call time. Undefined (or an
+   * empty answer) offers the whole catalog; see {@link filterEnabledModels}.
+   * Read live rather than captured so a settings edit applies to the next
+   * picker read without re-registering the provider.
+   */
+  enabledModels?: () => readonly string[] | undefined
   /** Resolve the durable attachment service at request time, when present. */
   resolveAttachments?: () => AttachmentStore | undefined
 }
@@ -196,7 +204,7 @@ function toPiModel(info: CodeBuddyModelInfo, baseUrl: string): Model<Api> {
  * ephemeral port applies from the first snapshot after startup.
  */
 export function createCodeBuddyAdapter(options: CodeBuddyAdapterOptions): CodeBuddyAdapter {
-  const { shim, store, catalog, resolveAttachments } = options
+  const { shim, store, catalog, enabledModels, resolveAttachments } = options
 
   const buildModels = (): Model<Api>[] => {
     // The OpenAI SDK pi-ai drives appends `/chat/completions` to baseURL,
@@ -240,7 +248,7 @@ export function createCodeBuddyAdapter(options: CodeBuddyAdapterOptions): CodeBu
 
   let profiles = new Map<string, ResolvedPiAiProviderProfile>([[CODEBUDDY_PROVIDER, profile]])
 
-  const adapter = new CodeBuddyPiAiAdapter(catalog, {
+  const adapter = new CodeBuddyPiAiAdapter(catalog, enabledModels, {
     profiles: () => profiles,
     auth: INERT_AUTH,
     // Resolve the shim's per-process shared secret as the OpenAI apiKey so
@@ -278,6 +286,7 @@ export function createCodeBuddyAdapter(options: CodeBuddyAdapterOptions): CodeBu
 class CodeBuddyPiAiAdapter extends PiAiAdapter {
   constructor(
     private readonly catalog: CodeBuddyCatalog,
+    private readonly enabledModels: (() => readonly string[] | undefined) | undefined,
     options: ConstructorParameters<typeof PiAiAdapter>[0],
   ) {
     super(options)
@@ -288,13 +297,30 @@ class CodeBuddyPiAiAdapter extends PiAiAdapter {
     return this.catalog.current().find(entry => entry.id === model)
   }
 
+  /**
+   * The enabled-model allowlist narrows this answer only — the *offer* surface.
+   *
+   * Dispatch deliberately stays whole: `resolveModel` below, the pi-ai
+   * provider's own `getModels`, and the shim's `/v1/models` all keep serving
+   * the complete catalog. A session already pinned to a model the user later
+   * unchecked therefore keeps streaming instead of failing to resolve, and an
+   * agent preset naming that id stays valid; the model simply stops being
+   * offered in the pickers, which is exactly what the setting asks for.
+   */
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const models = await super.listModels(provider)
-    return models.map(model => {
-      const info = this.infoFor(model.id)
-      if (info === undefined) return model
-      return { ...model, name: withCatalogDisplay(model.name, info) }
-    })
+    const allowed = filterEnabledModels(this.catalog.current(), this.enabledModels?.())
+    // An id absent from the catalog is never filtered out: catalog membership
+    // is advisory here, and the selection can only speak about ids it listed.
+    const catalogIds = new Set(this.catalog.current().map(entry => entry.id))
+    const allowedIds = new Set(allowed.map(entry => entry.id))
+    return models
+      .filter(model => !catalogIds.has(model.id) || allowedIds.has(model.id))
+      .map(model => {
+        const info = this.infoFor(model.id)
+        if (info === undefined) return model
+        return { ...model, name: withCatalogDisplay(model.name, info) }
+      })
   }
 
   override async resolveModel(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo> {

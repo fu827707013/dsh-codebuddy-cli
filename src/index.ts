@@ -22,6 +22,7 @@ export { createCodeBuddyShim, type CodeBuddyShim } from './shim.ts'
 export {
   FALLBACK_CODEBUDDY_MODELS,
   CodeBuddyCatalog,
+  filterEnabledModels,
   type CodeBuddyModelInfo,
 } from './catalog.ts'
 export {
@@ -84,10 +85,21 @@ export const CODEBUDDY_SETTINGS_NS = 'codebuddy-cli' as SettingsNamespace
 export interface Config {
   /** Explicit CodeBuddy CLI auth-file path, overriding env and platform defaults. */
   authFile?: string
+  /**
+   * Allowlist of CodeBuddy model ids the model pickers offer.
+   *
+   * The CodeBuddy roster is long (15 rows and growing), and the composer's
+   * model seat lists every served model at once. This narrows what the pickers
+   * show without touching dispatch: an absent or empty list means the whole
+   * catalog, so an untouched install behaves exactly as before, and a session
+   * already pinned to a de-selected model keeps working.
+   */
+  enabledModels?: string[]
 }
 
 export const Config: z<Config> = z.object({
   authFile: z.string().description('CodeBuddy CLI auth file (defaults to the CLI\'s own location)'),
+  enabledModels: z.array(z.string()).description('Model ids offered in the model pickers (empty means every model)'),
 })
 
 /**
@@ -105,9 +117,38 @@ export function apply(ctx: Context, config: Config): void {
   const catalog = new CodeBuddyCatalog()
   const shim = createCodeBuddyShim({ store, client, catalog, logger: ctx.logger })
 
+  // The authoritative configuration read. Assigned below by the settings
+  // section when one attaches (and re-assigned back to the composition entry
+  // when it detaches), so every consumer that reads through this thunk sees
+  // live edits without re-registering anything.
+  let current = (): Config => config
+  const enabledModels = (): readonly string[] | undefined => current().enabledModels
+
+  /**
+   * Persist a model selection into this plugin's settings section.
+   *
+   * The settings service is resolved per call rather than captured, matching
+   * how the adapter resolves `attachments`: a headless profile has no settings
+   * provider at all, and the card must be told the selection is not writable
+   * rather than silently dropping it.
+   */
+  const setEnabledModels = async (ids: readonly string[]): Promise<boolean> => {
+    const settings = ctx.get('settings')
+    if (settings === undefined) return false
+    await settings.update(CODEBUDDY_SETTINGS_NS, { enabledModels: [...ids] })
+    return true
+  }
+
   // Same-origin status route backing the Plugin-configuration card; the
   // webServer service is optional (a headless profile serves no browser).
-  ctx.inject(['webServer'], webCtx => registerCodeBuddyStatusRoute(webCtx, { store, client, models: () => catalog.current() }))
+  ctx.inject(['webServer'], webCtx => registerCodeBuddyStatusRoute(webCtx, {
+    store,
+    client,
+    models: () => catalog.current(),
+    enabledModels,
+    setEnabledModels,
+    settingsWritable: () => ctx.get('settings') !== undefined,
+  }))
 
   // The settings section is what makes the provider visible on the Models
   // settings page (settings.describe joins the provider directory), and it
@@ -118,7 +159,6 @@ export function apply(ctx: Context, config: Config): void {
   // has to wait for a settings service to exist — exactly what the inject
   // below does. Without one the plugin still serves its models; it simply has
   // no user-editable section, as before.
-  let current = () => config
   ctx.inject(['settings'], settingsCtx => {
     settingsCtx.settings.installSection(ctx, CODEBUDDY_SETTINGS_NS, Config, config, {
       setSource(source) { current = source },
@@ -148,6 +188,7 @@ export function apply(ctx: Context, config: Config): void {
           shim,
           store,
           catalog,
+          enabledModels,
           resolveAttachments: () => ctx.get('attachments'),
         })
         invalidate = codebuddy.invalidate

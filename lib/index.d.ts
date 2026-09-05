@@ -280,6 +280,27 @@ declare class CodeBuddyCatalog {
   /** Replace the list; callers invalidate their adapter snapshot after this. */
   set(models: readonly CodeBuddyModelInfo[]): void;
 }
+/**
+ * Narrow a catalog to the user's enabled selection.
+ *
+ * The selection is an allowlist of model ids kept in this plugin's settings
+ * section (`enabledModels`). Two states mean "everything": an absent list (the
+ * out-of-the-box default, so an untouched install keeps serving the whole
+ * roster) and an empty list (a user who unchecked every row did not intend to
+ * empty their model picker — the composer would have nothing to select, which
+ * is worse than ignoring the edit).
+ *
+ * Ids in the selection that the catalog does not carry are ignored rather than
+ * failing: the upstream roster changes under a stored selection, and a
+ * retired id must not invalidate the rest of the list. If a selection matches
+ * nothing at all, the whole catalog is served — the same reasoning as the empty
+ * list, applied to a selection that has gone entirely stale.
+ *
+ * @param models - the full catalog as the upstream (or the fallback) describes it.
+ * @param enabled - the allowlist of model ids, or undefined for no restriction.
+ * @returns the models the picker should offer, in catalog order.
+ */
+declare function filterEnabledModels(models: readonly CodeBuddyModelInfo[], enabled: readonly string[] | undefined): readonly CodeBuddyModelInfo[];
 //#endregion
 //#region src/shim.d.ts
 /** Minimal logger surface the plugin context already provides. */
@@ -326,6 +347,13 @@ interface CodeBuddyAdapterOptions {
   shim: CodeBuddyShim;
   store: CodeBuddyCredentialStore;
   catalog: CodeBuddyCatalog;
+  /**
+   * Read the user's enabled-model allowlist at call time. Undefined (or an
+   * empty answer) offers the whole catalog; see {@link filterEnabledModels}.
+   * Read live rather than captured so a settings edit applies to the next
+   * picker read without re-registering the provider.
+   */
+  enabledModels?: () => readonly string[] | undefined;
   /** Resolve the durable attachment service at request time, when present. */
   resolveAttachments?: () => AttachmentStore | undefined;
 }
@@ -429,6 +457,16 @@ declare const CODEBUDDY_SETTINGS_NS: SettingsNamespace;
 interface Config {
   /** Explicit CodeBuddy CLI auth-file path, overriding env and platform defaults. */
   authFile?: string;
+  /**
+   * Allowlist of CodeBuddy model ids the model pickers offer.
+   *
+   * The CodeBuddy roster is long (15 rows and growing), and the composer's
+   * model seat lists every served model at once. This narrows what the pickers
+   * show without touching dispatch: an absent or empty list means the whole
+   * catalog, so an untouched install behaves exactly as before, and a session
+   * already pinned to a de-selected model keeps working.
+   */
+  enabledModels?: string[];
 }
 declare const Config: z<Config>;
 /**
@@ -439,4 +477,4 @@ declare const Config: z<Config>;
  */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { CODEBUDDY_AUTH_FILENAME, CODEBUDDY_AUTH_FILE_ENV, CODEBUDDY_HOST_HEARTBEAT_FILENAME, CODEBUDDY_PROVIDER, CODEBUDDY_SETTINGS_NS, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, type CodeBuddyAdapter, type CodeBuddyAuthStatus, CodeBuddyCatalog, type CodeBuddyChatResult, type CodeBuddyCredential, CodeBuddyCredentialStore, type CodeBuddyCredits, type CodeBuddyEffort, type CodeBuddyHostHeartbeat, type CodeBuddyModelBilling, type CodeBuddyModelInfo, type CodeBuddyModelReasoning, type CodeBuddyRefreshOutcome, type CodeBuddyShim, CodeBuddyUpstreamClient, type CodeBuddyUpstreamModel, Config, FALLBACK_CODEBUDDY_MODELS, type UpstreamErrorKind, apply, classifyUpstreamError, clearHostHeartbeat, codebuddyHostHeartbeatPath, codebuddyOwnAuthPath, createCodeBuddyAdapter, createCodeBuddyShim, defaultAuthDir, defaultAuthDirCandidates, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseCodeBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf };
+export { CODEBUDDY_AUTH_FILENAME, CODEBUDDY_AUTH_FILE_ENV, CODEBUDDY_HOST_HEARTBEAT_FILENAME, CODEBUDDY_PROVIDER, CODEBUDDY_SETTINGS_NS, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, type CodeBuddyAdapter, type CodeBuddyAuthStatus, CodeBuddyCatalog, type CodeBuddyChatResult, type CodeBuddyCredential, CodeBuddyCredentialStore, type CodeBuddyCredits, type CodeBuddyEffort, type CodeBuddyHostHeartbeat, type CodeBuddyModelBilling, type CodeBuddyModelInfo, type CodeBuddyModelReasoning, type CodeBuddyRefreshOutcome, type CodeBuddyShim, CodeBuddyUpstreamClient, type CodeBuddyUpstreamModel, Config, FALLBACK_CODEBUDDY_MODELS, type UpstreamErrorKind, apply, classifyUpstreamError, clearHostHeartbeat, codebuddyHostHeartbeatPath, codebuddyOwnAuthPath, createCodeBuddyAdapter, createCodeBuddyShim, defaultAuthDir, defaultAuthDirCandidates, filterEnabledModels, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseCodeBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf };

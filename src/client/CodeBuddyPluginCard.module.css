@@ -212,6 +212,165 @@
   background: var(--dsw-alias-brand-primary);
 }
 
+/* —— Collapsible body sections ——
+   The account block stays open; the credit, promo, and model-selection blocks
+   fold. The summary line shares the disclosure's row, so the credit total reads
+   at a glance while its package bars stay folded. */
+
+.section {
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.sectionToggle {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 2px 2px;
+  margin-left: -2px;
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.sectionToggle:hover .sectionHeading {
+  color: var(--dsw-alias-brand-primary);
+}
+
+.sectionToggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.sectionHeading {
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  transition: color .16s;
+}
+
+/* Collapsed points right, expanded points down: the card's own chevron
+   vocabulary, one step further closed. */
+.sectionChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transform: rotate(-90deg);
+  transition: transform .16s;
+}
+
+.sectionChevronOpen {
+  transform: rotate(0deg);
+}
+
+/* —— Enabled-model selection ——
+   A checkbox list over the live catalog. The rows are dense on purpose: the
+   roster runs to 15+ models, and the point of the control is to see the whole
+   list at once while deciding what to hide. */
+
+.choiceList {
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.choiceRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  margin: 0 -6px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.choiceRow:hover {
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.choiceRowDisabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.choiceRowDisabled:hover {
+  background: none;
+}
+
+.choiceBox {
+  flex: none;
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--dsw-alias-brand-primary);
+}
+
+.choiceName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+}
+
+.choiceMeta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The save row reuses the refresh capsule's vocabulary; the primary action is
+   filled so a pending selection reads as an unsaved change. */
+.choiceActions {
+  margin: 12px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.choiceSave {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-onbrand, #fff);
+}
+
+.choiceSave:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.choiceSave:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.choiceSave:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

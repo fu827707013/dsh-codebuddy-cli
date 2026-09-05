@@ -101,4 +101,37 @@ describe('CodeBuddy Host settings integration', () => {
     const updated = ctx.settings.describe().find(entry => entry.ns === CodeBuddy.CODEBUDDY_SETTINGS_NS)
     expect((updated?.value as Record<string, unknown>)['authFile']).toBe('/tmp/other-codebuddy.info')
   })
+
+  it('narrows the offered model list to the enabled selection while dispatch stays whole', async () => {
+    root = await mkdtemp(join(tmpdir(), 'dsh-codebuddy-cli-models-'))
+    vi.stubEnv('DSH_HOME', root)
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    await ctx.plugin(CodeBuddy, {})
+
+    await vi.waitFor(() => {
+      expect(ctx.llm.listProviders().map(provider => provider.id)).toContain('codebuddy-cli')
+    })
+
+    // Out of the box every model is offered.
+    const before = await ctx.llm.listModels('codebuddy-cli')
+    expect(before.length).toBe(CodeBuddy.FALLBACK_CODEBUDDY_MODELS.length)
+
+    // A stored selection narrows the picker, live — no re-registration.
+    await ctx.settings.update(CodeBuddy.CODEBUDDY_SETTINGS_NS, { enabledModels: ['glm-5.3', 'hy4-preview'] })
+    const after = await ctx.llm.listModels('codebuddy-cli')
+    expect(after.map(model => model.id)).toEqual(['hy4-preview', 'glm-5.3'])
+
+    // Dispatch is unaffected: a session pinned to a de-selected model still
+    // resolves, so unchecking a model never breaks work already in flight.
+    const resolved = await ctx.llm.resolveModelInfo('codebuddy-cli', 'kimi-k2.6')
+    expect(resolved.id).toBe('kimi-k2.6')
+
+    // Clearing the selection restores the whole roster.
+    await ctx.settings.update(CodeBuddy.CODEBUDDY_SETTINGS_NS, { enabledModels: [] })
+    const restored = await ctx.llm.listModels('codebuddy-cli')
+    expect(restored.length).toBe(CodeBuddy.FALLBACK_CODEBUDDY_MODELS.length)
+  })
 })

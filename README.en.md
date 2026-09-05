@@ -13,6 +13,7 @@ Reuse the CodeBuddy CLI (CodeBuddy Code) sign-in to bring its models (GLM-5.3, G
 - **Credits and badges**: the billing multiplier (e.g. `GLM-5.2 · x0.79`) and promo badges ride the model name, synced from the server on every DSH start. Display only — it never affects the request that is sent.
 - **In-chat credit line**: a compact credit figure lives right below the composer box (next to the session stats strip), e.g. `Credits 1.2K`, with the selected CodeBuddy model's billing rate appended when applicable (e.g. `Credits 1.2K · x0.79`). Click it for a details panel: total credit, per-package progress rows, the current model's rate, and a manual refresh. The line hides itself for sessions on non-CodeBuddy models.
 - **Status card**: Settings → Plugins → DSH CodeBuddy CLI Connect shows the account, token expiry, remaining credit, and the models currently on a promo.
+- **Available models**: the same settings card lets you check which models the model pickers offer (setting `enabledModels`). CodeBuddy ships 15+ models and listing all of them fills the picker; uncheck the ones you do not use and only your own shortlist remains. Unchecking only stops a model from being *offered* — sessions and agent presets already pinned to it keep working — and checking nothing is the same as offering everything.
 
 ## Install
 
