@@ -15,7 +15,7 @@ import { normalizeCredits } from './upstream.ts'
 import type { CodeBuddyModelInfo } from './catalog.ts'
 import { hostIsLoopback, originIsLoopback } from './loopback.ts'
 import { CODEBUDDY_STATUS_PATH } from './status-paths.ts'
-import type { CodeBuddyWebModelBadge, CodeBuddyWebStatus } from './status-paths.ts'
+import type { CodeBuddyWebCredits, CodeBuddyWebModelBadge, CodeBuddyWebRateMap, CodeBuddyWebStatus } from './status-paths.ts'
 
 export { CODEBUDDY_STATUS_PATH } from './status-paths.ts'
 export type { CodeBuddyWebStatus } from './status-paths.ts'
@@ -53,12 +53,47 @@ function loopbackRequest(req: IncomingMessage): boolean {
 }
 
 /**
+ * The composer dock polls the status route alongside the card's own polling,
+ * and a live billing upstream call per poll would multiply the CodeBuddy
+ * billing endpoint's traffic for no user-visible gain (credit figures move
+ * only when the user spends). A short TTL collapses concurrent and
+ * back-to-back document builds into one upstream call.
+ */
+const CREDITS_CACHE_TTL_MS = 30_000
+
+/** Max-age memo of one billing answer, keyed by nothing (one credential per process). */
+export interface CreditsCacheEntry {
+  at: number
+  credits: CodeBuddyWebCredits
+}
+
+/**
+ * Build the whole-catalog rate/name maps for the composer dock, or undefined
+ * when the catalog is empty. Every served model appears (not only promo rows):
+ * the dock resolves the multiplier of whatever model the session currently
+ * has selected.
+ */
+function rateMapOf(models: readonly CodeBuddyModelInfo[]): CodeBuddyWebRateMap | undefined {
+  if (models.length === 0) return undefined
+  const rates: Record<string, string> = {}
+  const names: Record<string, string> = {}
+  for (const model of models) {
+    names[model.id] = model.name
+    const rate = normalizeCredits(model.billing?.credits)
+    if (rate !== undefined) rates[model.id] = rate
+  }
+  return { rates, names }
+}
+
+/**
  * Assemble the card's status document. Sign-in state is read-only; credit is
  * a live billing answer whose failure degrades to `creditsError` rather than
- * failing the whole document.
+ * failing the whole document, memoized briefly so the card and the composer
+ * dock's polling share one upstream call per TTL window.
  */
 export async function codeBuddyWebStatus(
   deps: CodeBuddyStatusRouteOptions,
+  creditsCache?: { entry?: CreditsCacheEntry },
 ): Promise<CodeBuddyWebStatus> {
   const authStatus = await deps.store.status()
   if (authStatus.state !== 'signed-in') return { status: 'signed-out' }
@@ -89,21 +124,33 @@ export async function codeBuddyWebStatus(
   const statusWithModels: CodeBuddyWebStatus = modelsField.length > 0
     ? { ...status, models: modelsField }
     : status
+  // The dock's catalog map rides the signed-in document too; an empty catalog
+  // omits it rather than shipping two empty objects.
+  const catalog = rateMapOf(models)
+  const statusWithCatalog: CodeBuddyWebStatus = catalog === undefined
+    ? statusWithModels
+    : { ...statusWithModels, catalog }
   try {
     const credential = await deps.store.current()
     if (credential !== undefined) {
+      const cached = creditsCache?.entry
+      if (cached !== undefined && Date.now() - cached.at < CREDITS_CACHE_TTL_MS) {
+        return { ...statusWithCatalog, credits: cached.credits }
+      }
       const credits = await deps.client.fetchCredits(credential)
-      return { ...statusWithModels, credits }
+      if (creditsCache !== undefined) creditsCache.entry = { at: Date.now(), credits }
+      return { ...statusWithCatalog, credits }
     }
   } catch (error: unknown) {
-    return { ...statusWithModels, creditsError: safeMessage(error) }
+    return { ...statusWithCatalog, creditsError: safeMessage(error) }
   }
-  return statusWithModels
+  return statusWithCatalog
 }
 
 /** The status route's request handler, extracted so tests can mount it on a bare server. */
 export function codeBuddyStatusHandler(
   deps: CodeBuddyStatusRouteOptions,
+  creditsCache?: { entry?: CreditsCacheEntry },
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     if (req.method !== 'GET') {
@@ -115,7 +162,7 @@ export function codeBuddyStatusHandler(
       return
     }
     try {
-      json(res, 200, await codeBuddyWebStatus(deps))
+      json(res, 200, await codeBuddyWebStatus(deps, creditsCache))
     } catch (error: unknown) {
       json(res, 500, { error: safeMessage(error) })
     }
@@ -125,10 +172,13 @@ export function codeBuddyStatusHandler(
 /** Mount the GET status route on an optional webServer context. */
 export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatusRouteOptions): void {
   ctx.effect(() => {
+    // One memo per route: the card and the dock both poll this handler, and
+    // the cache collapses their overlapping TTL windows into upstream calls.
+    const creditsCache: { entry?: CreditsCacheEntry } = {}
     const dispose = ctx.webServer.register({
       kind: 'exact',
       path: CODEBUDDY_STATUS_PATH,
-      handler: codeBuddyStatusHandler(deps),
+      handler: codeBuddyStatusHandler(deps, creditsCache),
     })
     return () => {
       dispose()
