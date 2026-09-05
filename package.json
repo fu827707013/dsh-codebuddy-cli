@@ -63,11 +63,13 @@
         "@deepseek-ai/dsh-api-session-controller",
         "@deepseek-ai/dsh-client-locale"
       ],
+      "external": [
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
       "platform": "web"
     }
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.84.2",
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-atomic-write": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-attachment": "^0.1.2-rc.1",
@@ -77,16 +79,17 @@
     "@deepseek-ai/dsh-llm-pi-ai": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-settings": "^0.1.2-rc.1",
     "@deepseek-ai/schemastery": "^3.18.2",
+    "@earendil-works/pi-ai": "^0.84.2",
     "react": "^18.2.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.84.2",
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-api-session-controller": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-atomic-write": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-attachment": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-client-locale": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-client-ui-conversation": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.2-rc.1",
     "@deepseek-ai/dsh-client-ui-renderer": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-client-ui-session": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-client-ui-settings-plugins": "^0.1.2-rc.1",
@@ -98,8 +101,10 @@
     "@deepseek-ai/dsh-llm-pi-ai": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-settings": "^0.1.2-rc.1",
     "@deepseek-ai/schemastery": "^3.18.2",
+    "@earendil-works/pi-ai": "^0.84.2",
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",
+    "lightningcss": "^1.33.0",
     "react": "^18.2.0",
     "tsdown": "^0.22.2",
     "typescript": "^5.9.3",

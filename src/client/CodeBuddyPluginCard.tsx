@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
+import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import { CODEBUDDY_STATUS_PATH } from '../status-paths.ts'
 import type { CodeBuddyWebModelBadge, CodeBuddyWebStatus } from '../status-paths.ts'
 import type { CodeBuddySettingsKey } from './locales.ts'
+import css from './CodeBuddyPluginCard.module.css'
 
 /** Localized copy injected by the browser-plugin registration. */
 export interface CodeBuddyPluginCardInjected {
@@ -20,75 +22,30 @@ export type CodeBuddyPluginCardProps =
 
 const POLL_INTERVAL_MS = 60_000
 
-const cardStyle: CSSProperties = {
-  overflow: 'hidden',
-  border: '1px solid var(--dsw-alias-border-l2)',
-  borderRadius: 10,
-  background: 'var(--dsw-alias-bg-module-platform)',
+/**
+ * Join CSS-module class names, skipping empties. The css-module declaration
+ * types every lookup as `string | undefined` under noUncheckedIndexedAccess
+ * (the host package sits behind clsx's tolerant signature; this card avoids
+ * the extra dependency with the same two-line helper).
+ */
+function cx(...names: Array<string | undefined>): string {
+  return names.filter(name => name !== undefined && name !== '').join(' ')
 }
-const headerStyle: CSSProperties = {
-  boxSizing: 'border-box',
-  width: '100%',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 16,
-  border: 0,
-  padding: '13px 14px',
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-primary)',
-  font: 'inherit',
-  textAlign: 'left',
-  cursor: 'pointer',
-}
-const headTextStyle: CSSProperties = { display: 'flex', minWidth: 0, flexDirection: 'column', gap: 3 }
-const nameStyle: CSSProperties = { fontSize: 14, lineHeight: '20px', fontWeight: 600 }
-const descriptionStyle: CSSProperties = { fontSize: 13, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }
-const chevronStyle: CSSProperties = { flex: '0 0 auto', fontSize: 18, lineHeight: 1, transition: 'transform 120ms ease' }
-const cardBodyStyle: CSSProperties = { borderTop: '1px solid var(--dsw-alias-border-l2)', padding: '16px 14px 18px' }
 
-const bodyStyle: CSSProperties = { margin: 0, fontSize: 14, lineHeight: '22px', color: 'var(--dsw-alias-label-secondary)' }
-const rowStyle: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }
-const statusStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 9, fontSize: 15, fontWeight: 500, color: 'var(--dsw-alias-label-primary)' }
-const buttonStyle: CSSProperties = { boxSizing: 'border-box', minHeight: 34, padding: '6px 14px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 18, background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', font: 'inherit', fontSize: 14, cursor: 'pointer' }
-const errorStyle: CSSProperties = { ...bodyStyle, color: 'var(--dsw-alias-state-error-primary)' }
-const quotaListStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 18, paddingTop: 2 }
-const quotaGroupStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 10 }
-const quotaTitleStyle: CSSProperties = { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }
-const quotaLabelStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, lineHeight: '20px', color: 'var(--dsw-alias-label-secondary)' }
-const modelBadgeStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }
-const modelOfferStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2 }
-const modelRateStyle: CSSProperties = { fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }
-const modelBadgeChipStyle: CSSProperties = {
-  padding: '1px 8px', borderRadius: 999, fontSize: 11, lineHeight: '18px',
-  background: 'var(--dsw-alias-state-success-subtle, rgba(34, 160, 107, 0.12))',
-  color: 'var(--dsw-alias-state-success-primary, #22a06b)',
-}
+/**
+ * Card chrome comes from `CodeBuddyPluginCard.module.css`, which mirrors the
+ * host's own `PluginCard.module.css` rule for rule — same tokens, same
+ * radius, same paddings, same stroked chevron — so the card reads as part of
+ * the Plugin configuration list. This file holds only state and structure.
+ */
+
+const quotaTitleStyle: CSSProperties = { margin: '0 0 8px', fontSize: 13, lineHeight: 1.5, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }
 
 /** Localize an upstream promotional badge label, with an unknown-badge fallback. */
 function modelBadgeLabel(badge: string, t: CodeBuddyPluginCardInjected['t']): string {
   if (badge === '限时免费') return t('badgeLimitedFree')
   if (badge === '夜间折扣') return t('badgeNightDiscount')
   return badge
-}
-const progressTrackStyle: CSSProperties = { height: 8, overflow: 'hidden', borderRadius: 999, background: 'var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.08))' }
-
-function progressFillStyle(percent: number): CSSProperties {
-  return {
-    width: `${Math.max(0, Math.min(100, percent))}%`,
-    height: '100%',
-    borderRadius: 'inherit',
-    background: 'var(--dsw-alias-brand-primary, #1677ff)',
-  }
-}
-
-function dotStyle(status: CodeBuddyWebStatus['status']): CSSProperties {
-  const color = status === 'signed-in'
-    ? 'var(--dsw-alias-state-success-primary, #22a06b)'
-    : status === 'error'
-      ? 'var(--dsw-alias-state-error-primary, #d92d20)'
-      : 'var(--dsw-alias-label-dimmed, #9aa0a6)'
-  return { width: 9, height: 9, borderRadius: '50%', flex: '0 0 auto', background: color }
 }
 
 function formatNumber(value: number): string {
@@ -97,6 +54,16 @@ function formatNumber(value: number): string {
 
 function formatTime(ms: number): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(ms))
+}
+
+function progressFillStyle(percent: number): CSSProperties {
+  return { width: `${Math.max(0, Math.min(100, percent))}%` }
+}
+
+function statusDotClass(status: CodeBuddyWebStatus['status']): string {
+  if (status === 'signed-in') return cx(css.statusDotSignedIn)
+  if (status === 'error') return cx(css.statusDotError)
+  return cx(css.statusDotSignedOut)
 }
 
 /** One billing package as a labeled progress bar. */
@@ -110,22 +77,22 @@ function CreditBar({ label, remain, size, t }: {
   const percent = size > 0 ? (remain / size) * 100 : 100
   const display = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(percent)
   return (
-    <div style={quotaGroupStyle}>
-      <div style={quotaLabelStyle}>
+    <div>
+      <div className={css.quotaLabel}>
         <span>{label}</span>
         <span>{t('percentRemaining', { percent: display })}</span>
       </div>
       <div
-        style={progressTrackStyle}
+        className={css.progressTrack}
         role="progressbar"
         aria-label={label}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent}
       >
-        <div style={progressFillStyle(percent)} />
+        <div className={css.progressFill} style={progressFillStyle(percent)} />
       </div>
-      <p style={bodyStyle}>{detail}</p>
+      <p className={css.bodyText}>{detail}</p>
     </div>
   )
 }
@@ -142,17 +109,17 @@ function ModelOfferRow({ model, t }: {
   t: CodeBuddyPluginCardInjected['t']
 }): React.ReactNode {
   return (
-    <div style={modelOfferStyle}>
-      <div style={quotaLabelStyle}>
+    <div>
+      <div className={css.quotaLabel}>
         <span>{model.name}</span>
-        <span style={modelBadgeStyle}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {model.badges?.map(badge => (
-            <span key={badge} style={modelBadgeChipStyle}>{modelBadgeLabel(badge, t)}</span>
+            <span key={badge} className={css.badge}>{modelBadgeLabel(badge, t)}</span>
           ))}
-          {model.free === true ? <span style={modelBadgeChipStyle}>{t('freeModel')}</span> : null}
+          {model.free === true ? <span className={css.badge}>{t('freeModel')}</span> : null}
         </span>
       </div>
-      {model.credits === undefined ? null : <span style={modelRateStyle}>{t('rate', { rate: model.credits })}</span>}
+      {model.credits === undefined ? null : <span className={css.bodyText}>{t('rate', { rate: model.credits })}</span>}
     </div>
   )
 }
@@ -221,67 +188,69 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
       : t('signedOut')
 
   return (
-    <li style={cardStyle}>
+    <li className={open ? cx(css.card, css.cardOpen) : cx(css.card)}>
       <button
         type="button"
-        style={headerStyle}
+        className={css.header}
         aria-expanded={open}
         aria-label={`${t(open ? 'collapse' : 'expand')}: ${title}`}
         onClick={() => { setOpen(!open) }}
       >
-        <span style={headTextStyle}>
-          <span style={nameStyle}>{title}</span>
-          <span style={descriptionStyle}>{t('intro')}</span>
+        <span className={css.headText}>
+          <span className={css.name}>{title}</span>
+          <span className={css.description}>{t('intro')}</span>
         </span>
-        <span aria-hidden="true" style={{ ...chevronStyle, transform: open ? 'rotate(180deg)' : 'none' }}>⌄</span>
+        <IconChevronDownOutline14 className={open ? cx(css.chevron, css.chevronOpen) : cx(css.chevron)} />
       </button>
       {open
-        ? <div style={cardBodyStyle}>
-            <h3 style={quotaTitleStyle}>{t('accountHeading')}</h3>
-            <div style={rowStyle}>
-              <div style={statusStyle} role="status">
-                <span aria-hidden="true" style={dotStyle(status.status)} />
-                <span>{label}</span>
+        ? <div className={css.body}>
+            <div className={css.bodyBlock}>
+              <h3 style={quotaTitleStyle}>{t('accountHeading')}</h3>
+              <div className={css.bodyRow}>
+                <span className={css.statusLine} role="status">
+                  <span aria-hidden="true" className={cx(css.statusDot, statusDotClass(status.status))} />
+                  <span>{label}</span>
+                </span>
+                <button type="button" className={css.refresh} disabled={busy} onClick={() => { void manualRefresh() }}>
+                  {busy ? t('refreshing') : t('refresh')}
+                </button>
               </div>
-              <button type="button" style={buttonStyle} disabled={busy} onClick={() => { void manualRefresh() }}>
-                {busy ? t('refreshing') : t('refresh')}
-              </button>
-            </div>
-            {status.status === 'signed-in'
-              ? <>
-                  {status.expiresAt === undefined ? null
-                    : <p style={bodyStyle}>{t('accessTokenExpires', { time: formatTime(status.expiresAt) })}</p>}
-                  {status.credits === undefined ? null : (
-                    <div style={quotaListStyle}>
-                      <div style={rowStyle}>
-                        <h3 style={quotaTitleStyle}>{t('creditsHeading')}</h3>
-                        <span style={bodyStyle}>{t('creditsTotal', { total: formatNumber(status.credits.total) })}</span>
+              {status.status === 'signed-in'
+                ? <>
+                    {status.expiresAt === undefined ? null
+                      : <p className={css.bodyText}>{t('accessTokenExpires', { time: formatTime(status.expiresAt) })}</p>}
+                    {status.credits === undefined ? null : (
+                      <div className={css.quotaList}>
+                        <div className={css.bodyRow}>
+                          <h3 style={quotaTitleStyle}>{t('creditsHeading')}</h3>
+                          <span className={css.bodyText}>{t('creditsTotal', { total: formatNumber(status.credits.total) })}</span>
+                        </div>
+                        {status.credits.accounts
+                          .filter(account => account.remain > 0)
+                          .map((account, index) => (
+                          <CreditBar
+                            key={`${account.packageName}-${String(index)}`}
+                            label={account.packageName}
+                            remain={account.remain}
+                            size={account.size}
+                            t={t}
+                          />
+                        ))}
                       </div>
-                      {status.credits.accounts
-                        .filter(account => account.remain > 0)
-                        .map((account, index) => (
-                        <CreditBar
-                          key={`${account.packageName}-${String(index)}`}
-                          label={account.packageName}
-                          remain={account.remain}
-                          size={account.size}
-                          t={t}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  {status.creditsError === undefined ? null
-                    : <p style={errorStyle}>{t('creditsError', { message: status.creditsError })}</p>}
-                  {status.models === undefined || status.models.length === 0 ? null : (
-                    <div style={quotaListStyle}>
-                      <h3 style={quotaTitleStyle}>{t('modelsHeading')}</h3>
-                      {status.models.map(model => <ModelOfferRow key={model.id} model={model} t={t} />)}
-                    </div>
-                  )}
-                </>
-              : null}
-            {status.status === 'signed-out' ? <p style={bodyStyle}>{t('signedOutHint')}</p> : null}
-            {status.status === 'error' ? <p style={errorStyle}>{status.message}</p> : null}
+                    )}
+                    {status.creditsError === undefined ? null
+                      : <p className={css.bodyError}>{t('creditsError', { message: status.creditsError })}</p>}
+                    {status.models === undefined || status.models.length === 0 ? null : (
+                      <div className={css.quotaList}>
+                        <h3 style={quotaTitleStyle}>{t('modelsHeading')}</h3>
+                        {status.models.map(model => <ModelOfferRow key={model.id} model={model} t={t} />)}
+                      </div>
+                    )}
+                  </>
+                : null}
+              {status.status === 'signed-out' ? <p className={css.bodyText}>{t('signedOutHint')}</p> : null}
+              {status.status === 'error' ? <p className={css.bodyError}>{status.message}</p> : null}
+            </div>
           </div>
         : null}
     </li>
