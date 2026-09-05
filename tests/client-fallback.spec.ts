@@ -42,6 +42,9 @@ describe('client card fallback', () => {
         ctx.slots.inject('settings.plugin.item', () => {
           throw new Error('not reached')
         })
+        ctx.slots.inject('conversation.composer.dock', () => {
+          throw new Error('not reached')
+        })
         void t
       } catch (error: unknown) {
         console.error('[dsh-codebuddy-cli] client card failed to load (host provider unaffected):', error)

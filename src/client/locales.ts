@@ -25,7 +25,28 @@ export const en = {
   badgeLimitedFree: 'Limited-time free',
   badgeNightDiscount: 'Night discount',
   rate: '{rate} credits per message',
+  creditTotalCompact: 'Credits {total}',
+  creditRate: '· {rate}',
+  creditPanelAria: 'CodeBuddy credit details',
+  creditPackageRemain: '{remain} / {size}',
+  creditModelFallback: 'Current model',
+  creditEmpty: 'No remaining credit.',
 } as const
+
+/** Keys of the composer credit dock (a strict subset of the card namespace). */
+export type CodeBuddyCreditKey = Extract<
+  keyof typeof en,
+  | 'creditsHeading'
+  | 'creditsError'
+  | 'refresh'
+  | 'requestFailed'
+  | 'creditTotalCompact'
+  | 'creditRate'
+  | 'creditPanelAria'
+  | 'creditPackageRemain'
+  | 'creditModelFallback'
+  | 'creditEmpty'
+>
 
 export type CodeBuddySettingsKey = keyof typeof en
 
@@ -54,4 +75,10 @@ export const zh: Record<CodeBuddySettingsKey, string> = {
   badgeLimitedFree: '限时免费',
   badgeNightDiscount: '夜间折扣',
   rate: '{rate} 积分/次',
+  creditTotalCompact: '积分 {total}',
+  creditRate: '· {rate}',
+  creditPanelAria: 'CodeBuddy 积分明细',
+  creditPackageRemain: '{remain} / {size}',
+  creditModelFallback: '当前模型',
+  creditEmpty: '暂无剩余积分。',
 }

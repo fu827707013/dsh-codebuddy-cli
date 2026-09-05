@@ -5,8 +5,17 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the conversation composer.dock slot and the session
+// standard kit (useProjection) the credit dock reads.
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+// Type-only: installs the Session standard props merge (useProjection seat).
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+// Type-only: merges the modelSelection key into SessionProjectionMap.
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import { CodeBuddyPluginCard } from './CodeBuddyPluginCard.tsx'
 import type { CodeBuddyPluginCardInjected } from './CodeBuddyPluginCard.tsx'
+import { CodeBuddyCreditDock } from './CodeBuddyCreditDock.tsx'
+import type { CodeBuddyCreditDockInjected } from './CodeBuddyCreditDock.tsx'
 import { en, zh } from './locales.ts'
 import type { CodeBuddySettingsKey } from './locales.ts'
 
@@ -62,6 +71,20 @@ export function apply(ctx: ClientContext): void {
       priority: 30,
       inject: (): CodeBuddyPluginCardInjected => ({ t }),
     }, CodeBuddyPluginCard))
+    // The composer credit line rides the same locale namespace (its keys are a
+    // subset) and the session-scoped `conversation.composer.dock` list slot —
+    // the slot the host's own stats strip occupies, so the credit figure sits
+    // directly under the input box beside the token statistics. A dock
+    // registration failure must not take the settings card down: it degrades
+    // through the same catch, and the card stays the last-man-standing surface.
+    const creditT = t as unknown as CodeBuddyCreditDockInjected['t']
+    ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+      name: 'conversation.composer.dock',
+      id: 'codebuddy-credits',
+      order: 20,
+      locale: namespace,
+      inject: (): CodeBuddyCreditDockInjected => ({ t: creditT }),
+    }, CodeBuddyCreditDock))
   } catch (error: unknown) {
     // Degrade silently on the page: the host provider still serves models.
     // Developers see the full cause in the browser console; users see no banner.
