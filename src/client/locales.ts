@@ -1,4 +1,4 @@
-/** Plugin-card copy registered under the settings.codebuddy locale namespace. */
+/** Plugin-card copy registered under the settings.codebuddy-cli locale namespace. */
 
 export const en = {
   title: 'DSH CodeBuddy CLI Connect',

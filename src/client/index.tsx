@@ -13,7 +13,7 @@ import type { CodeBuddySettingsKey } from './locales.ts'
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     /** CodeBuddy plugin card copy. */
-    'settings.codebuddy': CodeBuddySettingsKey
+    'settings.codebuddy-cli': CodeBuddySettingsKey
   }
 }
 
@@ -53,12 +53,12 @@ export const inject = ['slots', 'locale']
  */
 export function apply(ctx: ClientContext): void {
   try {
-    const namespace = 'settings.codebuddy'
+    const namespace = 'settings.codebuddy-cli'
     ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-codebuddy-cli: settings copy')
     const t = ctx.locale.bind(namespace) as CodeBuddyPluginCardInjected['t']
     ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
       name: 'settings.plugin.item',
-      key: 'codebuddy',
+      key: 'codebuddy-cli',
       priority: 30,
       inject: (): CodeBuddyPluginCardInjected => ({ t }),
     }, CodeBuddyPluginCard))

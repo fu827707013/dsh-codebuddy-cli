@@ -36,7 +36,7 @@ describe('client card fallback', () => {
     // Mirror of src/client/index.tsx apply() body.
     function apply(ctx: any): void {
       try {
-        const namespace = 'settings.codebuddy'
+        const namespace = 'settings.codebuddy-cli'
         ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-codebuddy-cli: settings copy')
         const t = ctx.locale.bind(namespace)
         ctx.slots.inject('settings.plugin.item', () => {
