@@ -1,0 +1,54 @@
+name: Publish Package
+
+# 发布 npm 包：
+#   - GitHub Packages：用 GITHUB_TOKEN 发布 @fu827707013/dsh-codebuddy-cli（打 tag 发布 release 时触发）
+#   - npmjs：用 npm Trusted Publisher（OIDC）发布 dsh-codebuddy-cli，免 token、免 OTP
+# 触发：GitHub Release 发布（打 tag 发布 release 即触发）或手动 workflow_dispatch。
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish-github-packages:
+    name: Publish to GitHub Packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          # scope 必须与 GitHub 用户名一致，GitHub npm 注册表不接受无 scope 包名
+          scope: '@fu827707013'
+      - name: Retag as scoped package for GitHub Packages
+        # 只在 CI 里临时把包名改成 @fu827707013/dsh-codebuddy-cli，
+        # 不动仓库源码里 npmjs 用的无 scope 包名 dsh-codebuddy-cli
+        run: npm pkg set name="@fu827707013/dsh-codebuddy-cli"
+      - name: Publish
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-npmjs:
+    name: Publish to npmjs (OIDC)
+    # npm Trusted Publisher（OIDC）：workflow 必须有 id-token: write，
+    # npm CLI 自动检测 OIDC 环境并换取一次性发布凭证，无需任何 npm token。
+    # 前置：在 npmjs.com 包设置页配置 Trusted Publisher
+    #   （GitHub Actions / fu827707013 / dsh-codebuddy-cli / release.yml）。
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC 必需
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          # 注意：不设 registry-url —— OIDC 握手由 npm CLI 自动完成，
+          # 显式 .npmrc 认证反而会干扰 trusted publisher 流程。
+          node-version: '24' # 内置 npm >= 11，满足 OIDC/trusted publishing 要求
+      - name: Publish with provenance
+        run: npm publish --provenance --access public
