@@ -28,6 +28,12 @@ export const en = {
   rate: '{rate} credits per message',
   creditTotalCompact: 'Credits {total}',
   creditRate: '· {rate}',
+  creditLoading: 'Credits …',
+  creditSignedOut: 'Credits — not signed in',
+  creditUnavailable: 'Credits unavailable',
+  dockProvider: 'Provider {provider}',
+  dockModel: 'Model {model}',
+  dockNoModel: 'No model selected',
   creditPanelAria: 'CodeBuddy credit details',
   creditPackageRemain: '{remain} / {size}',
   creditModelFallback: 'Current model',
@@ -46,7 +52,12 @@ export const en = {
   optionalModelsSaveFailed: 'Could not save the selection: {message}',
 } as const
 
-/** Keys of the composer credit dock (a strict subset of the card namespace). */
+/**
+ * Keys of the composer credit dock (a strict subset of the card namespace).
+ *
+ * The dock renders for every provider, so this covers the provider/model
+ * pieces too — not only the CodeBuddy credit wording.
+ */
 export type CodeBuddyCreditKey = Extract<
   keyof typeof en,
   | 'creditsHeading'
@@ -55,6 +66,12 @@ export type CodeBuddyCreditKey = Extract<
   | 'requestFailed'
   | 'creditTotalCompact'
   | 'creditRate'
+  | 'creditLoading'
+  | 'creditSignedOut'
+  | 'creditUnavailable'
+  | 'dockProvider'
+  | 'dockModel'
+  | 'dockNoModel'
   | 'creditPanelAria'
   | 'creditPackageRemain'
   | 'creditModelFallback'
@@ -91,6 +108,12 @@ export const zh: Record<CodeBuddySettingsKey, string> = {
   rate: '{rate} 积分/次',
   creditTotalCompact: '积分 {total}',
   creditRate: '· {rate}',
+  creditLoading: '积分 …',
+  creditSignedOut: '积分 — 未登录',
+  creditUnavailable: '积分不可用',
+  dockProvider: 'Provider {provider}',
+  dockModel: 'Model {model}',
+  dockNoModel: '未选择模型',
   creditPanelAria: 'CodeBuddy 积分明细',
   creditPackageRemain: '{remain} / {size}',
   creditModelFallback: '当前模型',

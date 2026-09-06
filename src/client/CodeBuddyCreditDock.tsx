@@ -1,14 +1,21 @@
 /**
  * The composer credit line: one compact row mounted on
  * `conversation.composer.dock` — the same slot the host's session-stats strip
- * occupies, so the credit figure sits directly under the input box beside the
- * token statistics, styled to read as one family (tertiary 13px text,
- * tabular numbers, same variable palette).
+ * occupies, so the figure sits directly under the input box beside the token
+ * statistics, styled to read as one family (tertiary 13px text, tabular
+ * numbers, same variable palette).
  *
- * The trigger line shows the total remaining credit; clicking opens a small
- * menu-surface panel (same surface vocabulary as the composer's
- * context-occupancy panel) with per-package progress rows, the selected
- * model's billing rate, and a manual refresh.
+ * The row is always present, whatever the session has selected: it names the
+ * current provider and model, and for a CodeBuddy selection prefixes the
+ * remaining credit and appends the model's billing multiplier. Loading,
+ * signed-out and error states each have their own wording rather than
+ * collapsing the row, so the composer's layout never shifts.
+ *
+ * Clicking opens a small menu-surface panel (same surface vocabulary as the
+ * composer's context-occupancy panel) with per-package progress rows, the
+ * selected model's billing rate, and a manual refresh. The panel is
+ * CodeBuddy-only — for another provider the row is plain text, because this
+ * plugin has no billing figures to show for it.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -16,8 +23,13 @@ import type { CSSProperties } from 'react'
 import type { UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
 import { CODEBUDDY_STATUS_PATH } from '../status-paths.ts'
 import type { CodeBuddyWebStatus } from '../status-paths.ts'
-import { buildCreditLine, currentCodeBuddyRate, isCodeBuddySelection } from './credit-line.ts'
-import type { CodeBuddyModelSelectionProjection } from './credit-line.ts'
+import {
+  buildDockLine,
+  formatCreditTotal,
+  isCodeBuddySelection,
+  renderDockSegments,
+} from './credit-line.ts'
+import type { CodeBuddyDockLoad, CodeBuddyModelSelectionProjection } from './credit-line.ts'
 import type { CodeBuddyCreditKey } from './locales.ts'
 
 /** Localized copy injected by the browser-plugin registration. */
@@ -144,11 +156,8 @@ const linkStyle: CSSProperties = {
   fontSize: 12,
 }
 
-/** Status read states. */
-type Load =
-  | { phase: 'loading' }
-  | { phase: 'ok'; value: CodeBuddyWebStatus }
-  | { phase: 'error'; message: string }
+/** Status read states (see `CodeBuddyDockLoad`). */
+type Load = CodeBuddyDockLoad
 
 /** Compact per-package progress row. */
 function PackageRow({ account, t }: {
@@ -178,29 +187,41 @@ function PackageRow({ account, t }: {
 }
 
 /**
- * The composer dock entry: a pure provider gate around {@link CreditDockBody}.
+ * The composer dock entry: reads the session's `modelSelection` projection and
+ * hands the current provider verdict to the always-mounted {@link CreditDockBody}.
  *
- * The gate holds no state and starts no work — it only reads the session's
- * `modelSelection` projection. The body (which fetches, polls and binds
- * document listeners) is mounted only for a CodeBuddy selection, so switching
- * the session to another provider unmounts it and its effects clean up: no
- * further status requests, no interval, no leftover panel.
+ * There is deliberately no provider gate here — unmounting the body would drop
+ * the composer's row whenever the user picked a non-CodeBuddy model. The body
+ * instead switches its own behaviour on `codeBuddy`: outside this plugin's
+ * provider it starts no status request, keeps no interval and closes the panel,
+ * while still rendering the provider/model row.
  */
 export function CodeBuddyCreditDock({ useProjection, useSession, t }: CodeBuddyCreditDockProps) {
   if (t === undefined) throw new Error('CodeBuddy credit dock requires its translation function')
   const selection = useProjection('modelSelection') as CodeBuddyModelSelectionProjection | undefined
-  if (!isCodeBuddySelection(selection)) return null
-  return <CreditDockBody selection={selection} useSession={useSession} t={t} />
+  return (
+    <CreditDockBody
+      selection={selection}
+      codeBuddy={isCodeBuddySelection(selection)}
+      useSession={useSession}
+      t={t}
+    />
+  )
 }
 
-/** The dock's stateful half, mounted only while a CodeBuddy model is selected. */
-function CreditDockBody({ selection, useSession, t }: {
+/**
+ * The dock's stateful half: always mounted, so the composer keeps exactly one
+ * row no matter which provider the session is on.
+ */
+function CreditDockBody({ selection, codeBuddy, useSession, t }: {
   selection: CodeBuddyModelSelectionProjection | undefined
+  /** Whether the current selection is served by this plugin's provider. */
+  codeBuddy: boolean
   useSession: CodeBuddyCreditDockProps['useSession']
   t: CodeBuddyCreditDockInjected['t']
 }): React.ReactNode {
   const running = useSession(snapshot => snapshot.running)
-  const [load, setLoad] = useState<Load>({ phase: 'loading' })
+  const [load, setLoad] = useState<Load>({ phase: 'idle' })
   const [open, setOpen] = useState(false)
   const mounted = useRef(true)
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -226,11 +247,21 @@ function CreditDockBody({ selection, useSession, t }: {
     }
   }
 
+  // Credit is a CodeBuddy figure, so the status route is only asked while a
+  // CodeBuddy model is selected. Switching away tears the interval down, drops
+  // the now-meaningless answer back to `idle` and closes the details panel —
+  // the row itself stays, showing the new provider and model.
   useEffect(() => {
+    if (!codeBuddy) {
+      setLoad({ phase: 'idle' })
+      setOpen(false)
+      return
+    }
+    setLoad({ phase: 'loading' })
     void refresh()
     const timer = window.setInterval(() => { void refresh() }, REFRESH_INTERVAL_MS)
     return () => { window.clearInterval(timer) }
-  }, [])
+  }, [codeBuddy])
 
   // Credit is billed server-side when a model request completes, so the
   // moment a turn settles (running → idle) is exactly when the upstream
@@ -238,13 +269,13 @@ function CreditDockBody({ selection, useSession, t }: {
   // interval; a short delay lets the provider finish its own accounting.
   const wasRunning = useRef(false)
   useEffect(() => {
-    if (wasRunning.current && !running) {
+    if (codeBuddy && wasRunning.current && !running) {
       const timer = window.setTimeout(() => { void refresh() }, 2_000)
       wasRunning.current = running
       return () => { window.clearTimeout(timer) }
     }
     wasRunning.current = running
-  }, [running])
+  }, [running, codeBuddy])
 
   // Outside click / Escape close while the panel is up (ContextMeter's pattern).
   useEffect(() => {
@@ -264,45 +295,41 @@ function CreditDockBody({ selection, useSession, t }: {
     }
   }, [open])
 
-  // A signed-out / error document keeps the dock quiet: the settings card is
-  // the sign-in surface, and an error here should never spam the composer.
-  if (load.phase !== 'ok' || load.value.status !== 'signed-in') return null
-  const status = load.value
-  const line = buildCreditLine(status.credits)
-  if (line === null) return null
+  const line = buildDockLine(selection, load)
+  const lineText = renderDockSegments(line.segments, t)
+  const status = load.phase === 'ok' && load.value.status === 'signed-in' ? load.value : undefined
+  const credits = line.credits
+  // The panel only carries CodeBuddy billing detail, so it stays unreachable
+  // (plain text, no dialog affordance) whenever there is none to show.
+  const panelAvailable = credits !== null
 
-  const rate = currentCodeBuddyRate(selection, status.catalog)
-  // The trigger shows the exact figure with thousands separators (1,651) —
-  // the compact 1.2K form lives in the details panel's history no more. The
-  // rate template already carries its own `·` separator.
-  const headline = t('creditTotalCompact', { total: new Intl.NumberFormat(undefined).format(line.total) })
-  const triggerText = rate === null
-    ? headline
-    : `${headline} ${t('creditRate', { rate: rate.rate })}`
+  if (!panelAvailable) {
+    return <div ref={rootRef} style={rootStyle}><span>{lineText}</span></div>
+  }
 
   return (
     <div ref={rootRef} style={rootStyle}>
       <button type="button" style={triggerStyle} aria-haspopup="dialog" aria-expanded={open}
         aria-label={t('creditPanelAria')} onClick={() => { setOpen(!open) }}>
-        {triggerText}
+        {lineText}
       </button>
       {open
         ? (
             <div style={panelStyle} role="dialog" aria-label={t('creditPanelAria')}>
               <div style={panelHeadingStyle}>
                 <span>{t('creditsHeading')}</span>
-                <span style={panelBigStyle}>{new Intl.NumberFormat(undefined).format(line.total)}</span>
+                <span style={panelBigStyle}>{formatCreditTotal(credits.total)}</span>
               </div>
-              {rate === null ? null : (
+              {line.rate === null ? null : (
                 <div style={modelRowStyle}>
-                  <span>{rate.name ?? t('creditModelFallback')}</span>
-                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>{t('creditRate', { rate: rate.rate })}</span>
+                  <span>{line.rate.name ?? t('creditModelFallback')}</span>
+                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>{t('creditRate', { rate: line.rate.rate })}</span>
                 </div>
               )}
-              {line.rows.length > 0
+              {credits.rows.length > 0
                 ? (
                     <div style={rowStyle}>
-                      {status.credits?.accounts
+                      {status?.credits?.accounts
                         .filter(account => account.remain > 0)
                         .map((account, index) => (
                           <PackageRow
@@ -314,7 +341,7 @@ function CreditDockBody({ selection, useSession, t }: {
                     </div>
                   )
                 : <p style={emptyNoteStyle}>{t('creditEmpty')}</p>}
-              {status.creditsError === undefined ? null : <p style={errorStyle}>{t('creditsError', { message: status.creditsError })}</p>}
+              {status?.creditsError === undefined ? null : <p style={errorStyle}>{t('creditsError', { message: status.creditsError })}</p>}
               <div style={footerStyle}>
                 <button type="button" style={linkStyle} onClick={() => { void refresh() }}>{t('refresh')}</button>
               </div>

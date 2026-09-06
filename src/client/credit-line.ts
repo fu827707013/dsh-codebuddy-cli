@@ -8,6 +8,16 @@
 
 import { CODEBUDDY_PROVIDER_ID } from '../status-paths.ts'
 import type { CodeBuddyWebRateMap } from '../status-paths.ts'
+import type { CodeBuddyCreditKey } from './locales.ts'
+
+/**
+ * Display spelling of this plugin's provider.
+ *
+ * A brand name, not translatable copy: the id (`codebuddy-cli`) is a routing
+ * key, so the line shows the product spelling instead. Foreign providers have
+ * no such table here — their raw provider id is shown as-is.
+ */
+export const CODEBUDDY_PROVIDER_LABEL = 'CodeBuddy'
 
 /** The `modelSelection` projection's shape (see dsh-api-session-controller/types). */
 export interface CodeBuddyModelSelection {
@@ -97,8 +107,9 @@ export function buildCreditLine(credits: CodeBuddyDockCredits | undefined): Code
  * just picked. An absent projection (no model chosen yet in this session, or
  * the projection has not landed) resolves to null.
  *
- * Both the dock's provider gate and {@link currentCodeBuddyRate} read through
- * this one helper so the two cannot drift apart on which selection counts.
+ * Every provider/model read ({@link isCodeBuddySelection},
+ * {@link currentCodeBuddyRate}, {@link buildDockLine}) goes through this one
+ * helper so they cannot drift apart on which selection counts.
  */
 export function currentModelSelection(
   selection: CodeBuddyModelSelectionProjection | undefined,
@@ -109,10 +120,11 @@ export function currentModelSelection(
 /**
  * Whether the session's current selection belongs to this plugin's provider.
  *
- * The whole dock is gated on this: the line advertises CodeBuddy spending, so
- * a WorkBuddy / DeepSeek session has nothing to show and must not even ask the
- * status route for credit. False while the projection is missing or carries no
- * selection at all.
+ * The dock itself is *not* gated on this (the line stays mounted for every
+ * provider so the composer never loses a row); this only decides whether the
+ * CodeBuddy-specific work happens: fetching/polling the plugin's status route
+ * and resolving a credits multiplier. False while the projection is missing or
+ * carries no selection at all.
  */
 export function isCodeBuddySelection(selection: CodeBuddyModelSelectionProjection | undefined): boolean {
   return currentModelSelection(selection)?.provider === CODEBUDDY_PROVIDER_ID
@@ -142,4 +154,114 @@ export function currentCodeBuddyRate(
 export function creditRowPercent(remain: number, size: number): number | null {
   if (size <= 0) return null
   return Math.max(0, Math.min(100, (remain / size) * 100))
+}
+
+/** Exact credit figure with thousands separators, e.g. `1,642`. */
+export function formatCreditTotal(total: number): string {
+  return new Intl.NumberFormat(undefined).format(total)
+}
+
+/**
+ * The dock's status-read state machine.
+ *
+ * `idle` is the state for a non-CodeBuddy session: the dock never asks this
+ * plugin's status route for a foreign provider, so there is no read in flight
+ * and no stale answer to render.
+ */
+export type CodeBuddyDockLoad =
+  | { readonly phase: 'idle' }
+  | { readonly phase: 'loading' }
+  | { readonly phase: 'ok'; readonly value: CodeBuddyDockStatus }
+  | { readonly phase: 'error'; readonly message: string }
+
+/**
+ * One piece of the composer line. `copy` pieces go through the host locale
+ * (never hard-coded user-facing text); `text` pieces are already-formatted
+ * upstream values such as the `x0.79` multiplier.
+ */
+export type CodeBuddyDockSegment =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'copy'; readonly key: CodeBuddyCreditKey; readonly params?: Readonly<Record<string, string>> }
+
+/** Everything the dock renders for the current session, in one value. */
+export interface CodeBuddyDockLine {
+  /** Line pieces, joined by the renderer with a `·` separator. Never empty. */
+  readonly segments: readonly CodeBuddyDockSegment[]
+  /** Whether the current selection is served by this plugin's provider. */
+  readonly codeBuddy: boolean
+  /** Credit figures for the details panel, or null when none are readable. */
+  readonly credits: CodeBuddyCreditLine | null
+  /** The selected model's multiplier, or null when it cannot be determined. */
+  readonly rate: { readonly rate: string; readonly name: string | undefined } | null
+}
+
+/**
+ * The credit piece of a CodeBuddy line.
+ *
+ * Every phase produces copy — loading, signed-out and "billing answer missing"
+ * each get their own wording — so the row never collapses to nothing while the
+ * status document is unusable.
+ */
+function creditSegment(load: CodeBuddyDockLoad, credits: CodeBuddyCreditLine | null): CodeBuddyDockSegment {
+  if (credits !== null) {
+    return { kind: 'copy', key: 'creditTotalCompact', params: { total: formatCreditTotal(credits.total) } }
+  }
+  if (load.phase === 'idle' || load.phase === 'loading') return { kind: 'copy', key: 'creditLoading' }
+  if (load.phase === 'ok' && load.value.status !== 'signed-in') return { kind: 'copy', key: 'creditSignedOut' }
+  return { kind: 'copy', key: 'creditUnavailable' }
+}
+
+/**
+ * Compose the composer line for whatever the session currently has selected.
+ *
+ * Always returns a renderable line — that is the point: the composer keeps one
+ * stable row whether the user is on a CodeBuddy model, on another provider, or
+ * has not picked a model yet.
+ *
+ * - CodeBuddy selection: credit state, then provider, model and (only when the
+ *   catalog knows it) the multiplier.
+ * - Any other provider: provider and model as the projection spells them. No
+ *   credit piece (the figure is CodeBuddy-only) and no multiplier — the generic
+ *   DSH ModelCatalog carries no rate field, so inventing one would be a lie.
+ * - No selection yet: a single placeholder piece, so the row still has content.
+ */
+export function buildDockLine(
+  selection: CodeBuddyModelSelectionProjection | undefined,
+  load: CodeBuddyDockLoad,
+): CodeBuddyDockLine {
+  const current = currentModelSelection(selection)
+  const codeBuddy = isCodeBuddySelection(selection)
+  const status = load.phase === 'ok' ? load.value : undefined
+  const credits = codeBuddy && status?.status === 'signed-in' ? buildCreditLine(status.credits) : null
+  const rate = codeBuddy ? currentCodeBuddyRate(selection, status?.catalog) : null
+  const segments: CodeBuddyDockSegment[] = []
+  if (codeBuddy) segments.push(creditSegment(load, credits))
+  if (current === null) {
+    segments.push({ kind: 'copy', key: 'dockNoModel' })
+    return { segments, codeBuddy, credits, rate }
+  }
+  segments.push({
+    kind: 'copy',
+    key: 'dockProvider',
+    params: { provider: codeBuddy ? CODEBUDDY_PROVIDER_LABEL : current.provider },
+  })
+  segments.push({
+    kind: 'copy',
+    key: 'dockModel',
+    // The catalog's display name reads better than the routing id, but only
+    // this plugin's catalog is available here; a foreign model keeps its id.
+    params: { model: (codeBuddy ? status?.catalog?.names[current.model] : undefined) ?? current.model },
+  })
+  if (rate !== null) segments.push({ kind: 'text', text: rate.rate })
+  return { segments, codeBuddy, credits, rate }
+}
+
+/** Render {@link buildDockLine}'s pieces into the one-line trigger text. */
+export function renderDockSegments(
+  segments: readonly CodeBuddyDockSegment[],
+  t: (key: CodeBuddyCreditKey, params?: Record<string, unknown>) => string,
+): string {
+  return segments
+    .map(segment => segment.kind === 'text' ? segment.text : t(segment.key, segment.params))
+    .join(' · ')
 }
