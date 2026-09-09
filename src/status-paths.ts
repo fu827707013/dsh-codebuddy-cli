@@ -15,6 +15,28 @@ export const CODEBUDDY_STATUS_PATH = '/plugins/dsh-codebuddy-cli/status'
 export const CODEBUDDY_MODELS_PATH = '/plugins/dsh-codebuddy-cli/enabled-models'
 
 /**
+ * Plugin-owned daily check-in endpoint.
+ *
+ * The card's check-in button POSTs here; the host half forwards the request
+ * to the CodeBuddy CN daily check-in upstream with the plugin-resolved
+ * credential. Same loopback/Origin gates as the enabled-model write route.
+ */
+export const CODEBUDDY_CHECKIN_PATH = '/plugins/dsh-codebuddy-cli/check-in'
+
+/** Daily check-in outcome status, already mapped for display. */
+export type CodeBuddyCheckInStatus = 'ok' | 'already' | 'failed'
+
+/**
+ * The daily check-in answer the card renders. `message` is upstream text
+ * (success confirmation, the "already" reason, or a failure detail) and is
+ * shown verbatim next to the localized status.
+ */
+export interface CodeBuddyCheckInOutcome {
+  status: CodeBuddyCheckInStatus
+  message: string
+}
+
+/**
  * The provider id this plugin registers in the Harness LLM seam.
  *
  * Shared with the browser half so the composer dock can match the session's

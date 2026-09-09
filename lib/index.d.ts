@@ -3,6 +3,19 @@ import { PiAiAdapter } from "@deepseek-ai/dsh-llm-pi-ai";
 import { Context } from "@deepseek-ai/cordis";
 import { SettingsNamespace } from "@deepseek-ai/dsh-settings";
 import { AttachmentStore } from "@deepseek-ai/dsh-attachment";
+//#region src/status-paths.d.ts
+/** Daily check-in outcome status, already mapped for display. */
+type CodeBuddyCheckInStatus = 'ok' | 'already' | 'failed';
+/**
+ * The daily check-in answer the card renders. `message` is upstream text
+ * (success confirmation, the "already" reason, or a failure detail) and is
+ * shown verbatim next to the localized status.
+ */
+interface CodeBuddyCheckInOutcome {
+  status: CodeBuddyCheckInStatus;
+  message: string;
+}
+//#endregion
 //#region src/upstream.d.ts
 /** CodeBuddy region selected by the credential's login domain. */
 type CodeBuddyRegion = 'cn' | 'global';
@@ -137,6 +150,13 @@ declare class CodeBuddyUpstreamClient {
   fetchModels(credential: CodeBuddyCredential): Promise<readonly CodeBuddyUpstreamModel[]>;
   /** POST the billing endpoint for the aggregated remaining credit. */
   fetchCredits(credential: CodeBuddyCredential): Promise<CodeBuddyCredits>;
+  /**
+   * POST the CN daily check-in endpoint. The answer is classified for the
+   * card rather than thrown: a transport or envelope failure, and an upstream
+   * "already checked in" business code, all come back as plain outcomes so
+   * the browser half never has to interpret upstream error text.
+   */
+  checkIn(credential: CodeBuddyCredential): Promise<CodeBuddyCheckInOutcome>;
 }
 //#endregion
 //#region src/auth.d.ts

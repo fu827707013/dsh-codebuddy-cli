@@ -148,6 +148,7 @@ export function apply(ctx: Context, config: Config): void {
     enabledModels,
     setEnabledModels,
     settingsWritable: () => ctx.get('settings') !== undefined,
+    checkIn: credential => client.checkIn(credential),
   }))
 
   // The settings section is what makes the provider visible on the Models

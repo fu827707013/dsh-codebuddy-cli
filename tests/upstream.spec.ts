@@ -285,3 +285,75 @@ describe('normalizeCredits', () => {
     expect(normalizeCredits('credits')).toBeUndefined()
   })
 })
+
+describe('CodeBuddyUpstreamClient.checkIn', () => {
+  it('POSTs the CN daily check-in endpoint and reports success', async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(JSON.stringify({ code: 0, msg: 'success', data: {} })))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const outcome = await new CodeBuddyUpstreamClient().checkIn(CREDENTIAL)
+    expect(outcome).toEqual({ status: 'ok', message: 'success' })
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://copilot.tencent.com/v2/billing/meter/daily-checkin')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe('{}')
+    const headers = init.headers as Record<string, string>
+    expect(headers['Authorization']).toBe('Bearer at')
+    expect(headers['X-Domain']).toBe('www.codebuddy.cn')
+  })
+
+  it('falls back to a default X-Domain when the credential domain is empty', async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(JSON.stringify({ code: 0, msg: 'ok' })))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await new CodeBuddyUpstreamClient().checkIn({ ...CREDENTIAL, domain: '' })
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect((init.headers as Record<string, string>)['X-Domain']).toBe('www.codebuddy.cn')
+  })
+
+  it('classifies an upstream already-checked-in answer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => fakeResponse(JSON.stringify({ code: 1051, msg: '今日已签到' }))))
+
+    const outcome = await new CodeBuddyUpstreamClient().checkIn(CREDENTIAL)
+    expect(outcome.status).toBe('already')
+    expect(outcome.message).toBe('今日已签到')
+  })
+
+  it('classifies an English already-checked-in answer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => fakeResponse(JSON.stringify({ code: 1, msg: 'Already checked in today' }))))
+
+    const outcome = await new CodeBuddyUpstreamClient().checkIn(CREDENTIAL)
+    expect(outcome.status).toBe('already')
+  })
+
+  it('reports a business-code failure as failed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => fakeResponse(JSON.stringify({ code: 500, msg: 'server exploded' }))))
+
+    const outcome = await new CodeBuddyUpstreamClient().checkIn(CREDENTIAL)
+    expect(outcome).toEqual({ status: 'failed', message: 'server exploded' })
+  })
+
+  it('reports a non-JSON upstream answer as failed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => fakeResponse('not json', true, 200)))
+
+    const outcome = await new CodeBuddyUpstreamClient().checkIn(CREDENTIAL)
+    expect(outcome.status).toBe('failed')
+  })
+
+  it('reports a transport error as failed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connect refused') }))
+
+    const outcome = await new CodeBuddyUpstreamClient().checkIn(CREDENTIAL)
+    expect(outcome.status).toBe('failed')
+    expect(outcome.message).toContain('transport error')
+  })
+
+  it('refuses to check in a global (workbuddy) account', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const outcome = await new CodeBuddyUpstreamClient().checkIn({ ...CREDENTIAL, domain: 'www.workbuddy.ai' })
+    expect(outcome.status).toBe('failed')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})

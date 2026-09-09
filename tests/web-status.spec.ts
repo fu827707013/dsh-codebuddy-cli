@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { CodeBuddyCredentialStore } from '../src/auth.ts'
 import type { CodeBuddyCredential } from '../src/auth.ts'
 import type { CodeBuddyCredits } from '../src/upstream.ts'
-import { codeBuddyStatusHandler, codeBuddyWebStatus } from '../src/web-status.ts'
-import { CODEBUDDY_STATUS_PATH } from '../src/status-paths.ts'
+import { codeBuddyCheckInHandler, codeBuddyStatusHandler, codeBuddyWebStatus } from '../src/web-status.ts'
+import { CODEBUDDY_CHECKIN_PATH, CODEBUDDY_STATUS_PATH } from '../src/status-paths.ts'
 import type { CodeBuddyWebCredits } from '../src/status-paths.ts'
 import type { CodeBuddyStatusRouteOptions } from '../src/web-status.ts'
 
@@ -173,5 +173,124 @@ describe('status document catalog and credits cache', () => {
     await codeBuddyWebStatus(deps)
     await codeBuddyWebStatus(deps)
     expect(creditCounts.count).toBe(2)
+  })
+})
+
+describe('check-in route gate', () => {
+  /** Raw check-in POST with full header control. */
+  function requestCheckIn(options: {
+    port: number
+    method: string
+    headers: Record<string, string>
+    body?: string
+  }): Promise<{ status: number, body: string }> {
+    return new Promise((resolve, reject) => {
+      const outgoing = request({
+        host: '127.0.0.1',
+        port: options.port,
+        method: options.method,
+        path: CODEBUDDY_CHECKIN_PATH,
+        headers: options.headers,
+      }, (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk: Buffer) => chunks.push(chunk))
+        res.on('end', () => resolve({
+          status: res.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString('utf8'),
+        }))
+      })
+      outgoing.on('error', reject)
+      outgoing.end(options.body ?? '')
+    })
+  }
+
+  async function startCheckInServer(
+    checkIn: CodeBuddyStatusRouteOptions['checkIn'],
+  ): Promise<number> {
+    const credential: CodeBuddyCredential = {
+      accessToken: 'at', refreshToken: 'rt', expiresAtMs: Date.now() + 3_600_000,
+      domain: 'www.codebuddy.cn', uid: 'u', source: 'dsh',
+    }
+    const deps: CodeBuddyStatusRouteOptions = {
+      store: { resolve: async () => credential } as unknown as CodeBuddyCredentialStore,
+      client: { fetchCredits: async () => ({ total: 0, accounts: [] }) },
+      models: () => [],
+      ...checkIn === undefined ? {} : { checkIn },
+    }
+    const server = createServer(codeBuddyCheckInHandler(deps))
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as { port: number }
+    CLEANUP.push(() => new Promise<void>(resolve => server.close(() => resolve())))
+    return port
+  }
+
+  const jsonHeaders = (port: number): Record<string, string> => ({
+    host: `127.0.0.1:${String(port)}`,
+    origin: `http://127.0.0.1:${String(port)}`,
+    'content-type': 'application/json',
+  })
+
+  it('serves a check-in POST and returns the classified outcome', async () => {
+    const port = await startCheckInServer(async () => ({ status: 'ok', message: 'success' }))
+    const response = await requestCheckIn({
+      port, method: 'POST', headers: jsonHeaders(port), body: '{}',
+    })
+    expect(response.status).toBe(200)
+    expect(JSON.parse(response.body)).toEqual({ status: 'ok', message: 'success' })
+  })
+
+  it('passes the resolved credential to the executor', async () => {
+    const seen: string[] = []
+    const port = await startCheckInServer(async (credential) => {
+      seen.push(credential.accessToken)
+      return { status: 'ok', message: '' }
+    })
+    await requestCheckIn({ port, method: 'POST', headers: jsonHeaders(port), body: '{}' })
+    expect(seen).toEqual(['at'])
+  })
+
+  it('refuses a POST without an Origin header', async () => {
+    const port = await startCheckInServer(async () => ({ status: 'ok', message: '' }))
+    const response = await requestCheckIn({
+      port, method: 'POST', headers: { host: `127.0.0.1:${String(port)}`, 'content-type': 'application/json' },
+    })
+    expect(response.status).toBe(403)
+  })
+
+  it('drops a request whose Host is not loopback', async () => {
+    const port = await startCheckInServer(async () => ({ status: 'ok', message: '' }))
+    const response = await requestCheckIn({
+      port, method: 'POST', headers: { host: 'evil.example:3080', origin: 'http://127.0.0.1:3080', 'content-type': 'application/json' },
+    })
+    expect(response.status).toBe(403)
+  })
+
+  it('answers 405 for non-POST methods', async () => {
+    const port = await startCheckInServer(async () => ({ status: 'ok', message: '' }))
+    const response = await requestCheckIn({ port, method: 'GET', headers: jsonHeaders(port) })
+    expect(response.status).toBe(405)
+  })
+
+  it('answers 415 for a non-JSON content type', async () => {
+    const port = await startCheckInServer(async () => ({ status: 'ok', message: '' }))
+    const response = await requestCheckIn({
+      port, method: 'POST',
+      headers: { host: `127.0.0.1:${String(port)}`, origin: `http://127.0.0.1:${String(port)}`, 'content-type': 'text/plain' },
+    })
+    expect(response.status).toBe(415)
+  })
+
+  it('answers 501 when no check-in executor is attached', async () => {
+    const port = await startCheckInServer(undefined)
+    const response = await requestCheckIn({ port, method: 'POST', headers: jsonHeaders(port), body: '{}' })
+    expect(response.status).toBe(501)
+    expect(JSON.parse(response.body)).toEqual({ error: 'check-in-unavailable' })
+  })
+
+  it('answers 500 when the executor fails', async () => {
+    const port = await startCheckInServer(async () => { throw new Error('boom') })
+    const response = await requestCheckIn({ port, method: 'POST', headers: jsonHeaders(port), body: '{}' })
+    expect(response.status).toBe(500)
+    expect(JSON.parse(response.body)).toEqual({ error: 'boom' })
   })
 })

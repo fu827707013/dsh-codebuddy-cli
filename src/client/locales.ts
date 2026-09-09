@@ -50,6 +50,12 @@ export const en = {
   optionalModelsReadOnly: 'This profile stores no settings, so the selection cannot be saved.',
   optionalModelsEmptyWarning: 'No model checked — saving this keeps every model offered.',
   optionalModelsSaveFailed: 'Could not save the selection: {message}',
+  checkIn: 'Check in',
+  checkingIn: 'Checking in…',
+  checkInSuccess: 'Checked in',
+  checkInAlready: 'Already checked in today',
+  checkInFailed: 'Check-in failed: {message}',
+  checkInUnavailable: 'Daily check-in is not available for this account.',
 } as const
 
 /**
@@ -130,4 +136,10 @@ export const zh: Record<CodeBuddySettingsKey, string> = {
   optionalModelsReadOnly: '当前 profile 不存储配置，无法保存该选择。',
   optionalModelsEmptyWarning: '未勾选任何模型——这样保存等同于提供全部模型。',
   optionalModelsSaveFailed: '保存失败：{message}',
+  checkIn: '签到',
+  checkingIn: '签到中…',
+  checkInSuccess: '签到成功',
+  checkInAlready: '今天已签到',
+  checkInFailed: '签到失败：{message}',
+  checkInUnavailable: '当前账号不支持每日签到。',
 }

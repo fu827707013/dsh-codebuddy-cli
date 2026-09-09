@@ -15,8 +15,9 @@ import { normalizeCredits } from './upstream.ts'
 import { filterEnabledModels } from './catalog.ts'
 import type { CodeBuddyModelInfo } from './catalog.ts'
 import { hostIsLoopback, originIsLoopback } from './loopback.ts'
-import { CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH } from './status-paths.ts'
+import { CODEBUDDY_CHECKIN_PATH, CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH } from './status-paths.ts'
 import type {
+  CodeBuddyCheckInOutcome,
   CodeBuddyWebCredits,
   CodeBuddyWebModelBadge,
   CodeBuddyWebModelChoice,
@@ -25,8 +26,8 @@ import type {
   CodeBuddyWebStatus,
 } from './status-paths.ts'
 
-export { CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH } from './status-paths.ts'
-export type { CodeBuddyWebStatus } from './status-paths.ts'
+export { CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH, CODEBUDDY_CHECKIN_PATH } from './status-paths.ts'
+export type { CodeBuddyWebStatus, CodeBuddyCheckInOutcome } from './status-paths.ts'
 
 /** Constructor dependencies. */
 export interface CodeBuddyStatusRouteOptions {
@@ -43,6 +44,11 @@ export interface CodeBuddyStatusRouteOptions {
   setEnabledModels?: (ids: readonly string[]) => Promise<boolean>
   /** Whether a settings provider is attached and could accept a write. */
   settingsWritable?: () => boolean
+  /**
+   * Forward the daily check-in to the upstream. When absent the check-in
+   * route answers 501, which the card renders as unavailable.
+   */
+  checkIn?: (credential: import('./auth.ts').CodeBuddyCredential) => Promise<CodeBuddyCheckInOutcome>
 }
 
 /** Largest enabled-model write the route accepts (bounds an untrusted body). */
@@ -328,7 +334,52 @@ export function codeBuddyEnabledModelsHandler(
   }
 }
 
-/** Mount the GET status route and the selection write route on an optional webServer context. */
+/**
+ * The daily check-in write handler.
+ *
+ * Same strict gate as the enabled-model write: POST only, loopback Host and a
+ * mandatory loopback `Origin`, JSON content type. The upstream answer is a
+ * plain outcome document, so the card never sees upstream error text without
+ * a status classification. A missing executor answers 501 instead of failing.
+ */
+export function codeBuddyCheckInHandler(
+  deps: CodeBuddyStatusRouteOptions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      json(res, 405, { error: 'method not allowed' })
+      return
+    }
+    if (!hostIsLoopback(req.headers.host) || !originIsLoopback(req.headers.origin)) {
+      json(res, 403, { error: 'request-not-trusted' })
+      return
+    }
+    if (typeof req.headers.origin !== 'string') {
+      json(res, 403, { error: 'origin-required' })
+      return
+    }
+    const type = req.headers['content-type']
+    if (typeof type !== 'string' || !type.trim().toLowerCase().startsWith('application/json')) {
+      json(res, 415, { error: 'content-type must be application/json' })
+      return
+    }
+    if (deps.checkIn === undefined) {
+      json(res, 501, { error: 'check-in-unavailable' })
+      return
+    }
+    try {
+      // `resolve` refreshes the token on demand, so the check-in always rides
+      // a credential the upstream will accept rather than the stored one.
+      const credential = await deps.store.resolve()
+      const outcome = await deps.checkIn(credential)
+      json(res, 200, outcome)
+    } catch (error: unknown) {
+      json(res, 500, { error: safeMessage(error) })
+    }
+  }
+}
+
+/** Mount the GET status route, the selection write route, and the daily check-in route. */
 export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatusRouteOptions): void {
   ctx.effect(() => {
     // One memo per route: the card and the dock both poll this handler, and
@@ -344,9 +395,15 @@ export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatus
       path: CODEBUDDY_MODELS_PATH,
       handler: codeBuddyEnabledModelsHandler(deps),
     })
+    const disposeCheckIn = ctx.webServer.register({
+      kind: 'exact',
+      path: CODEBUDDY_CHECKIN_PATH,
+      handler: codeBuddyCheckInHandler(deps),
+    })
     return () => {
       dispose()
       disposeModels()
+      disposeCheckIn()
     }
   }, 'dsh-codebuddy-cli: Web status route')
 }

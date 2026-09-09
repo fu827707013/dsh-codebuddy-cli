@@ -5,8 +5,8 @@ import type { CSSProperties } from 'react'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
-import { CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH } from '../status-paths.ts'
-import type { CodeBuddyWebModelBadge, CodeBuddyWebModelSelection, CodeBuddyWebStatus } from '../status-paths.ts'
+import { CODEBUDDY_CHECKIN_PATH, CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH } from '../status-paths.ts'
+import type { CodeBuddyCheckInOutcome, CodeBuddyWebModelBadge, CodeBuddyWebModelSelection, CodeBuddyWebStatus } from '../status-paths.ts'
 import type { CodeBuddySettingsKey } from './locales.ts'
 import css from './CodeBuddyPluginCard.module.css'
 
@@ -343,6 +343,8 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<CodeBuddyWebStatus>({ status: 'signed-out' })
   const [busy, setBusy] = useState(false)
+  const [checkingIn, setCheckingIn] = useState(false)
+  const [checkInOutcome, setCheckInOutcome] = useState<CodeBuddyCheckInOutcome | undefined>(undefined)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -393,6 +395,63 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
     }
   }
 
+  /**
+   * POST the daily check-in and show the classified outcome next to the
+   * button. The Host half resolves the freshest credential itself, so the
+   * browser never touches token material.
+   */
+  const runCheckIn = async (): Promise<void> => {
+    if (checkingIn) return
+    setCheckingIn(true)
+    setCheckInOutcome(undefined)
+    try {
+      const response = await fetch(CODEBUDDY_CHECKIN_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        credentials: 'same-origin',
+        body: '{}',
+      })
+      const body: unknown = await response.json().catch(() => undefined)
+      if (!response.ok) {
+        const detail = typeof (body as { error?: unknown } | undefined)?.error === 'string'
+          ? (body as { error: string }).error
+          : `HTTP ${String(response.status)}`
+        throw new Error(detail)
+      }
+      const outcome = body as CodeBuddyCheckInOutcome
+      setCheckInOutcome(outcome)
+      // A landed check-in changes the balance; the next status poll picks the
+      // new figure up through the Host's own short-TTL credit cache.
+      if (outcome.status === 'ok') void refresh()
+    } catch (cause: unknown) {
+      setCheckInOutcome({
+        status: 'failed',
+        message: cause instanceof Error ? cause.message : t('requestFailed'),
+      })
+    } finally {
+      if (mounted.current) setCheckingIn(false)
+    }
+  }
+
+  const checkInNote = (): React.ReactNode => {
+    if (checkInOutcome === undefined) return null
+    if (checkInOutcome.status === 'ok') {
+      return (
+        <span className={css.bodyText} style={{ margin: 0 }}>
+          {checkInOutcome.message === '' ? t('checkInSuccess') : `${t('checkInSuccess')} — ${checkInOutcome.message}`}
+        </span>
+      )
+    }
+    if (checkInOutcome.status === 'already') {
+      return <span className={css.bodyText} style={{ margin: 0 }}>{t('checkInAlready')}</span>
+    }
+    return (
+      <span className={css.bodyError} style={{ margin: 0 }}>
+        {t('checkInFailed', { message: checkInOutcome.message })}
+      </span>
+    )
+  }
+
   const title = t('title')
   const label = status.status === 'signed-in'
     ? status.nickname === undefined ? t('signedInAs', { nickname: '' }).replace(/[:：]\s*$/, '') : t('signedInAs', { nickname: status.nickname })
@@ -424,10 +483,23 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
                   <span aria-hidden="true" className={cx(css.statusDot, statusDotClass(status.status))} />
                   <span>{label}</span>
                 </span>
-                <button type="button" className={css.refresh} disabled={busy} onClick={() => { void manualRefresh() }}>
-                  {busy ? t('refreshing') : t('refresh')}
-                </button>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {status.status === 'signed-in'
+                    ? <button
+                        type="button"
+                        className={css.refresh}
+                        disabled={checkingIn}
+                        onClick={() => { void runCheckIn() }}
+                      >
+                        {checkingIn ? t('checkingIn') : t('checkIn')}
+                      </button>
+                    : null}
+                  <button type="button" className={css.refresh} disabled={busy} onClick={() => { void manualRefresh() }}>
+                    {busy ? t('refreshing') : t('refresh')}
+                  </button>
+                </span>
               </div>
+              {status.status === 'signed-in' ? checkInNote() : null}
               {status.status === 'signed-in'
                 ? <>
                     {status.expiresAt === undefined ? null

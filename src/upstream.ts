@@ -8,6 +8,9 @@
  */
 
 import type { CodeBuddyCredential } from './auth.ts'
+import type { CodeBuddyCheckInOutcome } from './status-paths.ts'
+
+export type { CodeBuddyCheckInOutcome } from './status-paths.ts'
 
 /** CodeBuddy region selected by the credential's login domain. */
 export type CodeBuddyRegion = 'cn' | 'global'
@@ -114,6 +117,15 @@ const GLOBAL_BASE = 'https://www.workbuddy.ai'
 const CLIENT_UA = 'CLI/2.63.2 CodeBuddy/2.63.2'
 const JSON_TIMEOUT_MS = 30_000
 const ERROR_BODY_LIMIT = 4096
+
+/** Daily check-in endpoint on the CN side. */
+const CN_CHECKIN_PATH = '/v2/billing/meter/daily-checkin'
+
+/** Upstream messages that mean "already checked in today". */
+const CHECKIN_ALREADY_MARKERS: readonly string[] = [
+  'already', 'checked in today', 'already signed', 'already checked',
+  '已签到', '已签', '今日已', '签过',
+]
 
 /** Insufficient-credit markers, ASCII lowercase plus the original Chinese. */
 const HARD_CREDIT_MARKERS: readonly string[] = [
@@ -311,6 +323,19 @@ function billingHeaders(credential: CodeBuddyCredential): Record<string, string>
   }
   if (credential.domain !== '') headers['X-Domain'] = credential.domain
   return headers
+}
+
+/**
+ * Daily check-in request headers. The billing headers already carry the
+ * authorization and identity fields; the check-in endpoint additionally wants
+ * an explicit domain header, so an empty credential domain falls back to the
+ * CN web domain rather than omitting the field.
+ */
+function checkInHeaders(credential: CodeBuddyCredential): Record<string, string> {
+  return {
+    ...billingHeaders(credential),
+    'X-Domain': credential.domain.trim() === '' ? 'www.codebuddy.cn' : credential.domain,
+  }
 }
 
 /**
@@ -595,5 +620,43 @@ export class CodeBuddyUpstreamClient {
       })
     }
     return { total, accounts }
+  }
+
+  /**
+   * POST the CN daily check-in endpoint. The answer is classified for the
+   * card rather than thrown: a transport or envelope failure, and an upstream
+   * "already checked in" business code, all come back as plain outcomes so
+   * the browser half never has to interpret upstream error text.
+   */
+  async checkIn(credential: CodeBuddyCredential): Promise<CodeBuddyCheckInOutcome> {
+    if (regionOf(credential.domain) !== 'cn') {
+      return { status: 'failed', message: 'daily check-in is only available for the CodeBuddy CN account' }
+    }
+    let response: Response
+    try {
+      response = await fetch(`${CN_CHAT_BASE}${CN_CHECKIN_PATH}`, {
+        method: 'POST',
+        headers: checkInHeaders(credential),
+        body: '{}',
+        signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
+      })
+    } catch (error: unknown) {
+      return { status: 'failed', message: `transport error: ${String(error)}` }
+    }
+    let envelope: Envelope
+    try {
+      envelope = await readEnvelope(response)
+    } catch (error: unknown) {
+      return { status: 'failed', message: error instanceof Error ? error.message : String(error) }
+    }
+    if (response.ok && envelope.code === 0) {
+      return { status: 'ok', message: envelope.msg.trim() === '' ? 'checked in' : envelope.msg }
+    }
+    const message = envelope.msg.trim() === '' ? `http ${response.status}` : envelope.msg
+    const lowered = message.toLowerCase()
+    for (const marker of CHECKIN_ALREADY_MARKERS) {
+      if (lowered.includes(marker.toLowerCase())) return { status: 'already', message }
+    }
+    return { status: 'failed', message }
   }
 }
