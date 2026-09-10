@@ -3,6 +3,103 @@ import { PiAiAdapter } from "@deepseek-ai/dsh-llm-pi-ai";
 import { Context } from "@deepseek-ai/cordis";
 import { SettingsNamespace } from "@deepseek-ai/dsh-settings";
 import { AttachmentStore } from "@deepseek-ai/dsh-attachment";
+//#region src/client-identity.d.ts
+/**
+ * CodeBuddy client identity: the headers the upstream uses to attribute a
+ * request to a client product and version.
+ *
+ * The CodeBuddy backend does not read `User-Agent` to decide which client a
+ * request came from. It reads a dedicated header family — `X-IDE-Type`,
+ * `X-IDE-Name`, `X-IDE-Version` and `X-Product-Version` — which the official
+ * CLI sets on every call. A request that omits them is attributed to no client
+ * at all, which is what makes the plugin's traffic indistinguishable from an
+ * unattributed client in the backend console.
+ *
+ * The official CLI derives those values the same way every time:
+ *
+ * - `ideType` is `cli` (its host detection resolves a plain `codebuddy`
+ *   process to `cli`; `--acp` maps to `vscode-acp` and `--serve` to `web-ui`).
+ * - the version fields come from the installed CLI build, so they track the
+ *   CLI the user actually has rather than a compile-time constant.
+ *
+ * This module reproduces that identity for the plugin's own upstream calls:
+ * `X-IDE-Type` is the constant `cli`, while the version fields are resolved
+ * from the installed `@tencent-ai/codebuddy-code` package so they can never
+ * drift from the CLI the credential came from. Resolution is best-effort — a
+ * missing or unreadable install falls back to a neutral placeholder instead of
+ * failing the request, because identity metadata must never break chat.
+ *
+ * @module dsh-codebuddy-cli/client-identity
+ */
+/**
+ * The IDE type the official CLI reports for a plain (non-ACP, non-serve)
+ * process. Kept as an exact constant: it is what the backend matches on to
+ * classify traffic as CLI traffic.
+ */
+declare const CODEBUDDY_IDE_TYPE = "cli";
+/** IDE name the CLI reports; mirrors its product name for the terminal. */
+declare const CODEBUDDY_IDE_NAME = "cli";
+/**
+ * Version reported when the installed CLI cannot be resolved. Deliberately a
+ * value that reads as "unknown" rather than a stale real version number: a
+ * plausible-but-wrong version is worse evidence than an honest placeholder.
+ */
+declare const CODEBUDDY_UNKNOWN_VERSION = "unknown";
+/** Resolved client identity carried on every upstream request. */
+interface CodeBuddyClientIdentity {
+  /** IDE type, always `cli` — see {@link CODEBUDDY_IDE_TYPE}. */
+  ideType: string;
+  /** IDE name, always `cli`. */
+  ideName: string;
+  /** Installed CLI version, or {@link CODEBUDDY_UNKNOWN_VERSION}. */
+  ideVersion: string;
+  /** Product version; tracks {@link ideVersion}. */
+  productVersion: string;
+}
+/**
+ * Decorated `User-Agent` the upstream sees. Kept in the CLI's own
+ * `CLI/<version> CodeBuddy/<version>` shape and now derived from the real
+ * installed version instead of a hardcoded constant.
+ */
+declare function userAgentFor(version: string): string;
+/**
+ * Read the version of an installed CodeBuddy CLI package.
+ *
+ * Resolution order mirrors how the CLI itself would be located, most specific
+ * first:
+ *
+ * 1. an explicit `package.json` path, for tests and unusual installs;
+ * 2. the package resolved from the plugin's own module graph (works when the
+ *    CLI is co-installed with, or hoisted next to, the plugin);
+ * 3. every directory on this Node process's module search path, which covers
+ *    global installs under npm, pnpm, fnm, nvm and Volta without needing to
+ *    know any of their layouts;
+ * 4. the conventional global npm roots for the running platform.
+ *
+ * Every step is best-effort: any failure moves to the next candidate, and the
+ * final fallback is {@link CODEBUDDY_UNKNOWN_VERSION}.
+ *
+ * @param explicitPath - optional absolute path to a CLI `package.json`.
+ * @returns the installed version, or the unknown placeholder.
+ */
+declare function resolveCodeBuddyCliVersion(explicitPath?: string): Promise<string>;
+/**
+ * Headers that carry the client identity to the upstream. These are the same
+ * header names the official CLI uses, which is what makes the backend
+ * attribute plugin traffic to a `cli` client instead of leaving it blank.
+ *
+ * @param identity - resolved identity from {@link resolveClientIdentity}.
+ * @returns the identity header block.
+ */
+declare function clientIdentityHeaders(identity: CodeBuddyClientIdentity): Record<string, string>;
+/**
+ * Resolve the full client identity once, ready to splat into request headers.
+ *
+ * @param explicitPath - optional absolute CLI `package.json` path.
+ * @returns the resolved identity.
+ */
+declare function resolveClientIdentity(explicitPath?: string): Promise<CodeBuddyClientIdentity>;
+//#endregion
 //#region src/status-paths.d.ts
 /** Daily check-in outcome status, already mapped for display. */
 type CodeBuddyCheckInStatus = 'ok' | 'already' | 'failed';
@@ -142,6 +239,15 @@ declare function prepareChatBody(source: string): string;
  * the credential explicitly so token refreshes apply on the next call.
  */
 declare class CodeBuddyUpstreamClient {
+  /**
+   * Begin resolving the client identity as soon as a client exists.
+   *
+   * Request headers are assembled synchronously, so the version headers can
+   * only appear once resolution has settled. Warming it here means the first
+   * request already carries them in practice, and a request issued before the
+   * probe finishes still carries `X-IDE-Type`/`X-IDE-Name` in the meantime.
+   */
+  constructor();
   /** POST the chat endpoint; a successful answer is the raw SSE response. */
   chatStream(credential: CodeBuddyCredential, bodyJson: string, signal?: AbortSignal): Promise<CodeBuddyChatResult>;
   /** POST the token-refresh endpoint; the caller merges the outcome. */
@@ -497,4 +603,4 @@ declare const Config: z<Config>;
  */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { CODEBUDDY_AUTH_FILENAME, CODEBUDDY_AUTH_FILE_ENV, CODEBUDDY_HOST_HEARTBEAT_FILENAME, CODEBUDDY_PROVIDER, CODEBUDDY_SETTINGS_NS, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, type CodeBuddyAdapter, type CodeBuddyAuthStatus, CodeBuddyCatalog, type CodeBuddyChatResult, type CodeBuddyCredential, CodeBuddyCredentialStore, type CodeBuddyCredits, type CodeBuddyEffort, type CodeBuddyHostHeartbeat, type CodeBuddyModelBilling, type CodeBuddyModelInfo, type CodeBuddyModelReasoning, type CodeBuddyRefreshOutcome, type CodeBuddyShim, CodeBuddyUpstreamClient, type CodeBuddyUpstreamModel, Config, FALLBACK_CODEBUDDY_MODELS, type UpstreamErrorKind, apply, classifyUpstreamError, clearHostHeartbeat, codebuddyHostHeartbeatPath, codebuddyOwnAuthPath, createCodeBuddyAdapter, createCodeBuddyShim, defaultAuthDir, defaultAuthDirCandidates, filterEnabledModels, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseCodeBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf };
+export { CODEBUDDY_AUTH_FILENAME, CODEBUDDY_AUTH_FILE_ENV, CODEBUDDY_HOST_HEARTBEAT_FILENAME, CODEBUDDY_IDE_NAME, CODEBUDDY_IDE_TYPE, CODEBUDDY_PROVIDER, CODEBUDDY_SETTINGS_NS, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, CODEBUDDY_UNKNOWN_VERSION, type CodeBuddyAdapter, type CodeBuddyAuthStatus, CodeBuddyCatalog, type CodeBuddyChatResult, type CodeBuddyClientIdentity, type CodeBuddyCredential, CodeBuddyCredentialStore, type CodeBuddyCredits, type CodeBuddyEffort, type CodeBuddyHostHeartbeat, type CodeBuddyModelBilling, type CodeBuddyModelInfo, type CodeBuddyModelReasoning, type CodeBuddyRefreshOutcome, type CodeBuddyShim, CodeBuddyUpstreamClient, type CodeBuddyUpstreamModel, Config, FALLBACK_CODEBUDDY_MODELS, type UpstreamErrorKind, apply, classifyUpstreamError, clearHostHeartbeat, clientIdentityHeaders, codebuddyHostHeartbeatPath, codebuddyOwnAuthPath, createCodeBuddyAdapter, createCodeBuddyShim, defaultAuthDir, defaultAuthDirCandidates, filterEnabledModels, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseCodeBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf, resolveClientIdentity, resolveCodeBuddyCliVersion, userAgentFor };

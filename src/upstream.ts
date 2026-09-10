@@ -8,7 +8,15 @@
  */
 
 import type { CodeBuddyCredential } from './auth.ts'
+import type { CodeBuddyClientIdentity } from './client-identity.ts'
 import type { CodeBuddyCheckInOutcome } from './status-paths.ts'
+import {
+  clientIdentityHeaders,
+  CODEBUDDY_IDE_NAME,
+  CODEBUDDY_IDE_TYPE,
+  CODEBUDDY_UNKNOWN_VERSION,
+  resolveClientIdentity,
+} from './client-identity.ts'
 
 export type { CodeBuddyCheckInOutcome } from './status-paths.ts'
 
@@ -114,9 +122,81 @@ const CN_CHAT_BASE = 'https://copilot.tencent.com'
 const CN_BILLING_BASE = 'https://www.codebuddy.cn'
 const GLOBAL_BASE = 'https://www.workbuddy.ai'
 
-const CLIENT_UA = 'CLI/2.63.2 CodeBuddy/2.63.2'
 const JSON_TIMEOUT_MS = 30_000
 const ERROR_BODY_LIMIT = 4096
+
+/**
+ * Client identity carried on every upstream request.
+ *
+ * The backend attributes a request to a client only when the `X-IDE-*` family
+ * is present; without it the request shows up as an unattributed client. The
+ * identity is cached after the first successful resolution because reading the
+ * installed CLI's version touches the filesystem and the value is stable for
+ * the lifetime of the process.
+ */
+let cachedIdentity: CodeBuddyClientIdentity | undefined
+
+/**
+ * Identity resolution in flight, so concurrent first requests share one
+ * filesystem probe instead of racing to read the same file.
+ */
+let pendingIdentity: Promise<CodeBuddyClientIdentity> | undefined
+
+/** Identity used before (or instead of) a successful filesystem resolution. */
+const FALLBACK_IDENTITY: CodeBuddyClientIdentity = {
+  ideType: CODEBUDDY_IDE_TYPE,
+  ideName: CODEBUDDY_IDE_NAME,
+  ideVersion: CODEBUDDY_UNKNOWN_VERSION,
+  productVersion: CODEBUDDY_UNKNOWN_VERSION,
+}
+
+/**
+ * Resolve and cache the CLI client identity, tolerating any failure: identity
+ * metadata must never be able to break a chat request.
+ *
+ * @param packageJsonPath - optional explicit CLI `package.json` path.
+ * @returns the resolved identity.
+ */
+export async function ensureClientIdentity(packageJsonPath?: string): Promise<CodeBuddyClientIdentity> {
+  return await startClientIdentityResolution(packageJsonPath)
+}
+
+/**
+ * Drop the cached identity. Exposed for tests, which must be able to exercise
+ * the resolved and unresolved paths independently within one process.
+ */
+export function resetClientIdentity(): void {
+  cachedIdentity = undefined
+  pendingIdentity = undefined
+}
+
+/**
+ * Identity for the next request, starting resolution if it has not run yet.
+ *
+ * Request headers are built synchronously while version resolution is async,
+ * so the first request cannot wait for the real version. Rather than send a
+ * versionless request and rely on the caller to have warmed the cache, this
+ * kicks off resolution on first use: `startClientIdentityResolution` is called
+ * from the client constructor, and the version headers appear as soon as the
+ * probe settles.
+ */
+export function startClientIdentityResolution(packageJsonPath?: string): Promise<CodeBuddyClientIdentity> {
+  if (cachedIdentity !== undefined) return Promise.resolve(cachedIdentity)
+  pendingIdentity ??= (async () => {
+    try {
+      cachedIdentity = await resolveClientIdentity(packageJsonPath)
+    } catch {
+      cachedIdentity = FALLBACK_IDENTITY
+    }
+    return cachedIdentity
+  })()
+  return pendingIdentity
+}
+
+/** Identity headers for the current request, resolving identity on first use. */
+function identityHeaders(): Record<string, string> {
+  return clientIdentityHeaders(cachedIdentity ?? FALLBACK_IDENTITY)
+}
 
 /** Daily check-in endpoint on the CN side. */
 const CN_CHECKIN_PATH = '/v2/billing/meter/daily-checkin'
@@ -276,7 +356,7 @@ function commonHeaders(credential: CodeBuddyCredential): Record<string, string> 
     'X-Requested-With': 'XMLHttpRequest',
     'Origin': originReferer(credential),
     'Referer': `${originReferer(credential)}/`,
-    'User-Agent': CLIENT_UA,
+    ...identityHeaders(),
   }
 }
 
@@ -315,6 +395,7 @@ function billingHeaders(credential: CodeBuddyCredential): Record<string, string>
     'Authorization': `Bearer ${credential.accessToken}`,
     'Accept': 'application/json',
     'Content-Type': 'application/json',
+    ...identityHeaders(),
   }
   if (credential.uid !== '') headers['X-User-Id'] = credential.uid
   if (credential.enterpriseId !== undefined && credential.enterpriseId !== '') {
@@ -454,6 +535,18 @@ function envelopeError(status: number, envelope: Envelope): Error {
  * the credential explicitly so token refreshes apply on the next call.
  */
 export class CodeBuddyUpstreamClient {
+  /**
+   * Begin resolving the client identity as soon as a client exists.
+   *
+   * Request headers are assembled synchronously, so the version headers can
+   * only appear once resolution has settled. Warming it here means the first
+   * request already carries them in practice, and a request issued before the
+   * probe finishes still carries `X-IDE-Type`/`X-IDE-Name` in the meantime.
+   */
+  constructor() {
+    void startClientIdentityResolution().catch(() => {})
+  }
+
   /** POST the chat endpoint; a successful answer is the raw SSE response. */
   async chatStream(
     credential: CodeBuddyCredential,
@@ -510,7 +603,7 @@ export class CodeBuddyUpstreamClient {
         'Accept': 'application/json',
         'Origin': originReferer(credential),
         'Referer': `${originReferer(credential)}/`,
-        'User-Agent': CLIENT_UA,
+        ...identityHeaders(),
       },
       signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
     })

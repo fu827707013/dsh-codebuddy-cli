@@ -22,6 +22,8 @@
 
 本插件面向 **DSH `0.1.2-rc.1` 及以上**，与旧版核心（如 `0.1.1-rc.2`）不兼容。
 
+同时兼容 `0.1.2` 与 `0.1.5` 两代宿主：`0.1.5` 起 `llm-pi-ai` 为路由 profile 新增了必需的 `modelErrors` 字段，插件会一并提供；旧版宿主忽略该字段，因此同一份构建产物在两代宿主上均可正常工作。
+
 ```sh
 # Web（推荐，自带预构建产物）
 dsh plugin --profile web add dsh-codebuddy-cli

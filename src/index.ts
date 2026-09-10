@@ -52,6 +52,16 @@ export {
   type CodeBuddyUpstreamModel,
 } from './upstream.ts'
 export {
+  clientIdentityHeaders,
+  resolveClientIdentity,
+  resolveCodeBuddyCliVersion,
+  userAgentFor,
+  CODEBUDDY_IDE_NAME,
+  CODEBUDDY_IDE_TYPE,
+  CODEBUDDY_UNKNOWN_VERSION,
+  type CodeBuddyClientIdentity,
+} from './client-identity.ts'
+export {
   CODEBUDDY_HOST_HEARTBEAT_FILENAME,
   clearHostHeartbeat,
   isHeartbeatProcessAlive,

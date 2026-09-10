@@ -236,15 +236,40 @@ export function createCodeBuddyAdapter(options: CodeBuddyAdapterOptions): CodeBu
   // provider, while the catalog answer tracks the upstream refresh.
   const provider: Provider = { ...base, getModels: () => buildModels() }
 
-  const profile: ResolvedPiAiProviderProfile = {
+  /**
+   * Build the resolved profile for the CodeBuddy route.
+   *
+   * The object is a deliberate superset of both supported `llm-pi-ai` shapes:
+   *
+   * - **DSH 0.1.2 era** — `configuredMaxTokens`, `piProvider`, the image
+   *   budgets, and the retry policy; no per-model failure map.
+   * - **DSH 0.1.5+** — additionally requires `modelErrors`, and reads it with
+   *   `profile.modelErrors.get(model)` inside `modelOf` before every model
+   *   lookup.
+   *
+   * Supplying every field is the one shape that works against both hosts. The
+   * object is built separately from its typed binding because the *installed*
+   * type declares only one of the two variants: a literal naming a field the
+   * local version does not know is a compile error, so the superset is built
+   * first and then bound through the compatibility cast below. The empty map is
+   * the honest value either way — this adapter reports no per-model failures,
+   * and an older host ignores the field completely.
+   */
+  const profileFields = {
     provider: CODEBUDDY_PROVIDER,
     displayName: 'CodeBuddy CLI',
     streamIdleTimeoutMs: CODEBUDDY_STREAM_IDLE_TIMEOUT_MS,
     retryPolicy: resolveRetryPolicy(undefined, 'dsh-codebuddy-cli retryPolicy'),
     configuredMaxTokens: new Map(),
+    // Required by DSH 0.1.5+; omitted a TypeError reaches the model selector as
+    // "CodeBuddy CLI 加载失败：Cannot read properties of undefined (reading 'get')".
+    modelErrors: new Map<string, string>(),
     ...REQUEST_IMAGE_BUDGETS,
     piProvider: provider,
   }
+  // The cast is the compatibility seam: `profileFields` is a superset of each
+  // supported declaration, so it satisfies whichever one is installed.
+  const profile = profileFields as unknown as ResolvedPiAiProviderProfile
 
   let profiles = new Map<string, ResolvedPiAiProviderProfile>([[CODEBUDDY_PROVIDER, profile]])
 
