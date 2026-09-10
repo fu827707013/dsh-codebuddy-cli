@@ -19,6 +19,7 @@ import { filterEnabledModels } from './catalog.ts'
 import type { CodeBuddyCatalog, CodeBuddyModelInfo } from './catalog.ts'
 import type { CodeBuddyShim } from './shim.ts'
 import { normalizeCredits } from './upstream.ts'
+import type { CodeBuddyEffort } from './upstream.ts'
 
 /** Provider route this bundle owns. */
 export const CODEBUDDY_PROVIDER = 'codebuddy-cli'
@@ -138,36 +139,51 @@ export interface CodeBuddyAdapter {
 }
 
 /**
+ * The effort ladder the upstream accepts, in pi-ai's level spelling. Verified
+ * against the live endpoint: every one of these is accepted for both
+ * declared-set rows and old-form rows, while an unrecognized value is rejected
+ * with `code 11150 the reasoning effort value is not supported by the current
+ * model`. This is the same fixed ladder the official CLI carries
+ * (`normalizeReasoningEffort` allows `minimal low medium high xhigh max`), and
+ * the CLI applies it to any reasoning-capable model without consulting a
+ * per-model set.
+ */
+const STANDARD_EFFORTS: readonly CodeBuddyEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
+
+/**
  * Resolve a CodeBuddy model's reasoning capability into pi-ai's
  * `thinkingLevelMap` (every level pinned to its wire spelling or `null` for
  * unsupported), mirroring `dsh-llm-pi-ai`'s own `resolveModelReasoning`.
  *
- * Declared sets only: a thinking control is offered exactly when the upstream
- * catalog declares a `supportedEfforts` list, and it offers exactly the
- * declared values. Rows without a list (the older `{effort, summary}` shape)
- * get no control at all — their selectable set is client-side knowledge the
- * catalog does not carry (the desktop app differs per model there: GLM-5.2
- * gets a thinking control while MiniMax-M3 and Kimi-K2.6 do not, though their
- * catalog rows are identical), and another implementation against the same
- * upstream (codebuddy2api) gates on the declared set and downgrades
- * out-of-set values rather than passing them through, so sending an
- * undeclared value risks a 400. Such models never carry `reasoning_effort`
- * on the wire; the upstream applies its own default.
- * `off` is offered only when the model explicitly reports thinking can be
- * disabled (`canDisableThinking === true`).
+ * Two upstream row shapes exist and they are handled differently:
+ *
+ * - **Declared set** (`reasoning.supportedEfforts`): the model advertises the
+ *   exact ladder it accepts, so the control offers exactly those values.
+ * - **Old form** (`reasoning.effort` + `summary`, no `supportedEfforts`): the
+ *   row carries no ladder, but that is *not* a statement that no effort can be
+ *   chosen. The official CLI treats exactly these rows as fully adjustable —
+ *   it gates only on `supportsReasoning` and then applies its global
+ *   `reasoningEffort` setting — and the live endpoint accepts the whole
+ *   standard ladder for them. Surfacing no control here is what made
+ *   DeepSeek-V4.1-Flash appear to have no effort selector while GLM-5.3-Flash
+ *   did.
+ *
+ * `off` is offered only when the model explicitly reports that thinking can be
+ * disabled (`canDisableThinking === true`); every other level maps to its wire
+ * spelling, and an unsupported one maps to `null`.
  */
-function reasoningFields(info: CodeBuddyModelInfo): { reasoning: boolean; thinkingLevelMap?: ThinkingLevelMap } {
+export function reasoningFields(info: CodeBuddyModelInfo): { reasoning: boolean; thinkingLevelMap?: ThinkingLevelMap } {
   const reasoning = info.reasoning
   if (reasoning === undefined || reasoning.supports !== true) {
     // Not a reasoning model: pi-ai reads a falsy `reasoning` as "off only".
     return { reasoning: false }
   }
-  const efforts = reasoning.supportedEfforts
-  if (efforts === undefined || efforts.length === 0) {
-    // No declared set: no thinking control, no `reasoning_effort` on the wire
-    // — identical to the pre-#9 behavior for these rows.
-    return { reasoning: false }
-  }
+  // A declared set wins when present; otherwise the model still accepts the
+  // standard ladder, which is what the official CLI sends for this row shape.
+  const declared = reasoning.supportedEfforts
+  const efforts: readonly CodeBuddyEffort[] = declared === undefined || declared.length === 0
+    ? STANDARD_EFFORTS
+    : declared
   const map: Record<ModelThinkingLevel, string | null> = {
     off: reasoning.canDisableThinking === true ? 'off' : null,
     // `minimal` is not in the upstream effort vocabulary (EFFORT_VALUES), so

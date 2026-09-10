@@ -80,13 +80,15 @@ describe('CodeBuddy Host settings integration', () => {
     expect(byId.get('glm-5.2')?.description).toBeUndefined()
     expect(byId.get('glm-5.3')?.description).toBeUndefined()
 
-    // Thinking controls are declared-set-only: models whose upstream row
-    // carries `supportedEfforts` expose exactly those efforts; rows without a
-    // list (the older `{effort, summary}` shape) expose no control at all, so
-    // requests never carry `reasoning_effort` for them and the upstream
-    // default applies — matching the CLI's own per-model gating.
+    // Thinking controls mirror what the upstream actually accepts. A declared
+    // `supportedEfforts` row exposes exactly those efforts; an old-form row
+    // (`{effort, summary}`, no ladder) still accepts the standard ladder, which
+    // the official CLI also sends for it, so it exposes that ladder rather than
+    // hiding the control — DeepSeek-V4.1-Flash appearing to have no effort
+    // selector was this bug.
     const autoResolved = await ctx.llm.resolveModelInfo('codebuddy-cli', 'auto')
-    expect(autoResolved.reasoning).toBeUndefined()
+    expect(autoResolved.reasoning?.efforts.map(effort => effort.id).sort())
+      .toEqual(['high', 'low', 'max', 'medium', 'xhigh'])
     const flashResolved = await ctx.llm.resolveModelInfo('codebuddy-cli', 'glm-5.3-flash')
     expect(flashResolved.reasoning?.efforts.map(effort => effort.id).sort()).toEqual(['high', 'low', 'max', 'off'])
 
