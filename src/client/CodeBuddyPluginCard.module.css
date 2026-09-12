@@ -90,14 +90,6 @@
   margin: 12px 0 0;
 }
 
-.bodyHeading {
-  margin: 0 0 8px;
-  font-size: 13px;
-  line-height: 1.5;
-  font-weight: 600;
-  color: var(--dsw-alias-label-primary);
-}
-
 .bodyRow {
   display: flex;
   align-items: center;
@@ -210,64 +202,6 @@
   height: 100%;
   border-radius: inherit;
   background: var(--dsw-alias-brand-primary);
-}
-
-/* —— Collapsible body sections ——
-   The account block stays open; the credit, promo, and model-selection blocks
-   fold. The summary line shares the disclosure's row, so the credit total reads
-   at a glance while its package bars stay folded. */
-
-.section {
-  margin: 12px 0 0;
-  padding-top: 12px;
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
-}
-
-.sectionToggle {
-  appearance: none;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 6px 2px 2px;
-  margin-left: -2px;
-  border-radius: 8px;
-  min-width: 0;
-}
-
-.sectionToggle:hover .sectionHeading {
-  color: var(--dsw-alias-brand-primary);
-}
-
-.sectionToggle:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 1px;
-}
-
-.sectionHeading {
-  font-size: 13px;
-  line-height: 1.5;
-  font-weight: 600;
-  color: var(--dsw-alias-label-primary);
-  transition: color .16s;
-}
-
-/* Collapsed points right, expanded points down: the card's own chevron
-   vocabulary, one step further closed. */
-.sectionChevron {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  transform: rotate(-90deg);
-  transition: transform .16s;
-}
-
-.sectionChevronOpen {
-  transform: rotate(0deg);
 }
 
 /* —— Enabled-model selection ——
@@ -383,4 +317,639 @@
   white-space: nowrap;
   background: var(--dsw-alias-state-success-subtle, rgba(34, 160, 107, 0.12));
   color: var(--dsw-alias-state-success-primary, #22a06b);
+}
+
+/* —— Horizontal tab bar ——
+   The card body opens with a row of tabs (账号管理 / 可选模型 / 积分统计 /
+   剩余积分); the active tab's panel renders below. */
+
+.tabBar {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding-bottom: 1px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  overflow-x: auto;
+}
+
+.tab {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 7px 12px;
+  border-radius: 8px 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  position: relative;
+}
+
+.tab:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.tabActive {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.tabActive::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--dsw-alias-brand-primary);
+}
+
+/* —— Account card grid (workbuddy-switch style) ——
+   Two columns so one account never fills the row; very narrow containers
+   (media query) fall back to a single column. */
+
+.accountGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+@media (max-width: 520px) {
+  .accountGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.accountCard {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-2);
+  overflow: hidden;
+}
+
+.accountCardHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.accountCardActiveHeader {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 6%, var(--dsw-alias-bg-layer-3));
+}
+
+.accountAvatar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-onbrand, #fff);
+  background: var(--dsw-alias-brand-primary);
+}
+
+.accountCardName {
+  min-width: 0;
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountCardChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.accountCardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.accountCardCreditRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.accountCardCreditTotal {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--dsw-alias-label-primary);
+}
+
+.accountCardCreditMeta {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.accountCardCreditUpdated {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.accountCardSectionLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.accountCardResource {
+  min-width: 0;
+}
+
+.accountCardResourceRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.accountCardResourceRemain {
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.accountCardResourceName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.accountCardResourceExpiry {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.accountCardResourceExpirySoon {
+  color: var(--dsw-alias-state-warning-primary, #d97706);
+}
+
+.accountCardResourceExpiryExpired {
+  color: var(--dsw-alias-label-error);
+}
+
+.accountCardViewAll {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  width: fit-content;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-brand-primary);
+  text-align: left;
+}
+
+.accountCardViewAll:hover {
+  color: var(--dsw-alias-brand-primary-hover, var(--dsw-alias-brand-primary));
+  text-decoration: underline;
+}
+
+.accountCardFooter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.accountCardActivePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+  border: 0.5px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent);
+}
+
+.accountCardCheckInOk {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-state-success-primary, #22a06b);
+}
+
+.accountCardCheckInFail {
+  font-size: 12px;
+  color: var(--dsw-alias-label-error);
+}
+
+/* —— Statistics panel —— */
+
+.statsSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 14px;
+  overflow: hidden;
+  margin-top: 12px;
+}
+
+.statsMetric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 8px;
+  text-align: center;
+}
+
+.statsMetricLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statsMetricValue {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--dsw-alias-label-primary);
+}
+
+.statsPanelCard {
+  margin-top: 12px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.statsPanelHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.statsPanelTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.statsRangeTabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.statsRangeTab {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statsRangeTab:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.statsRangeTabActive {
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.statsModelRows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.statsModelRow {
+  min-width: 0;
+}
+
+.statsModelRowHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.statsModelRowName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.statsModelRowMeta {
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.statsModelRowMeta strong {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.statsDetailTabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  margin-top: 8px;
+  width: fit-content;
+}
+
+.statsDetailTab {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statsDetailTab:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.statsDetailTabActive {
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.statsTableWrap {
+  margin-top: 8px;
+  overflow-x: auto;
+}
+
+.statsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.statsTable th {
+  text-align: left;
+  padding: 6px 8px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  white-space: nowrap;
+}
+
+.statsTable td {
+  padding: 6px 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-secondary);
+  vertical-align: top;
+}
+
+.statsTable td:first-child,
+.statsTable th:first-child {
+  padding-left: 0;
+}
+
+.statsTable tr:last-child td {
+  border-bottom: 0;
+}
+
+.statsAlert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-3);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.statsAlertWarning {
+  color: var(--dsw-alias-state-warning-primary, #b45309);
+  background: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #b45309) 8%, transparent);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #b45309) 25%, transparent);
+}
+
+.statsAlertError {
+  color: var(--dsw-alias-label-error);
+  background: color-mix(in srgb, var(--dsw-alias-label-error) 8%, transparent);
+  border-color: color-mix(in srgb, var(--dsw-alias-label-error) 25%, transparent);
+}
+
+/* —— Statistics account filter (workbuddy-switch style dropdown) —— */
+
+.statsFilterButton {
+  appearance: none;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+}
+
+.statsFilterButton:hover {
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.statsFilterMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 60;
+  min-width: 180px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-1, #fff));
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgba(0, 0, 0, 0.16)), 0 0 0 1px var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06));
+}
+
+.statsFilterItem {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  text-align: left;
+}
+
+.statsFilterItem:hover {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.statsFilterCheck {
+  flex: none;
+  color: var(--dsw-alias-brand-primary);
+  font-weight: 600;
+}
+
+/* —— Stacked chart legend —— */
+
+.statsChartLegend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statsChartLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.statsChartLegendSwatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+/* —— Stacked chart hover tooltip (workbuddy-switch style) —— */
+
+.statsChartTooltip {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 40;
+  min-width: 170px;
+  max-width: 260px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-1, #fff));
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgba(0, 0, 0, 0.18)), 0 0 0 1px var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06));
+  pointer-events: none;
+}
+
+.statsChartTooltipTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  margin-bottom: 4px;
+}
+
+.statsChartTooltipTotal {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  margin-bottom: 6px;
+}
+
+.statsChartTooltipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.statsChartTooltipName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statsChartTooltipValue {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
 }

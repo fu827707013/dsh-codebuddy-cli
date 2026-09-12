@@ -5,10 +5,19 @@ import type { CSSProperties } from 'react'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
-import { CODEBUDDY_CHECKIN_PATH, CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH } from '../status-paths.ts'
-import type { CodeBuddyCheckInOutcome, CodeBuddyWebModelBadge, CodeBuddyWebModelSelection, CodeBuddyWebStatus } from '../status-paths.ts'
+import {
+  CODEBUDDY_MODELS_PATH,
+  CODEBUDDY_STATUS_PATH,
+} from '../status-paths.ts'
+import type {
+  CodeBuddyWebModelBadge,
+  CodeBuddyWebModelSelection,
+  CodeBuddyWebStatus,
+} from '../status-paths.ts'
 import type { CodeBuddySettingsKey } from './locales.ts'
 import css from './CodeBuddyPluginCard.module.css'
+import { AccountCards } from './AccountCard.tsx'
+import { CreditStatsPanel, AccountFilterMenu } from './CreditStatsPanel.tsx'
 
 /** Localized copy injected by the browser-plugin registration. */
 export interface CodeBuddyPluginCardInjected {
@@ -32,13 +41,6 @@ function cx(...names: Array<string | undefined>): string {
   return names.filter(name => name !== undefined && name !== '').join(' ')
 }
 
-/**
- * Card chrome comes from `CodeBuddyPluginCard.module.css`, which mirrors the
- * host's own `PluginCard.module.css` rule for rule — same tokens, same
- * radius, same paddings, same stroked chevron — so the card reads as part of
- * the Plugin configuration list. This file holds only state and structure.
- */
-
 const quotaTitleStyle: CSSProperties = { margin: '0 0 8px', fontSize: 13, lineHeight: 1.5, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }
 
 /** Localize an upstream promotional badge label, with an unknown-badge fallback. */
@@ -52,65 +54,8 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat(undefined).format(value)
 }
 
-function formatTime(ms: number): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(ms))
-}
-
 function progressFillStyle(percent: number): CSSProperties {
   return { width: `${Math.max(0, Math.min(100, percent))}%` }
-}
-
-/**
- * One collapsible body section: a summary line that always shows, and detail
- * that folds away.
- *
- * The card body carries three lists whose length is set by the account, not by
- * the design — 12 credit packages and 15 catalog models on this machine — so an
- * always-expanded body scrolled past everything else in Plugin configuration.
- * The summary stays outside the fold on purpose: the credit total is the one
- * figure worth reading at a glance, and hiding it behind a chevron would trade
- * one problem for a worse one.
- *
- * The disclosure is a real button with `aria-expanded`, and the detail is simply
- * absent while collapsed rather than hidden with CSS, so assistive tech and tab
- * order agree with what is on screen.
- */
-function Section({ heading, summary, defaultOpen = false, expandLabel, collapseLabel, children }: {
-  heading: string
-  /** Always-visible right-hand summary, e.g. the credit total. */
-  summary?: React.ReactNode
-  defaultOpen?: boolean
-  expandLabel: string
-  collapseLabel: string
-  children: React.ReactNode
-}): React.ReactNode {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <div className={css.section}>
-      <div className={css.bodyRow}>
-        <button
-          type="button"
-          className={css.sectionToggle}
-          aria-expanded={open}
-          aria-label={`${open ? collapseLabel : expandLabel}: ${heading}`}
-          onClick={() => { setOpen(!open) }}
-        >
-          <IconChevronDownOutline14
-            className={open ? cx(css.sectionChevron, css.sectionChevronOpen) : cx(css.sectionChevron)}
-          />
-          <span className={css.sectionHeading}>{heading}</span>
-        </button>
-        {summary === undefined ? null : <span className={css.bodyText}>{summary}</span>}
-      </div>
-      {open ? children : null}
-    </div>
-  )
-}
-
-function statusDotClass(status: CodeBuddyWebStatus['status']): string {
-  if (status === 'signed-in') return cx(css.statusDotSignedIn)
-  if (status === 'error') return cx(css.statusDotError)
-  return cx(css.statusDotSignedOut)
 }
 
 /** One billing package as a labeled progress bar. */
@@ -146,10 +91,6 @@ function CreditBar({ label, remain, size, t }: {
 
 /**
  * One model offer row: name, promotional badges, and the billing rate.
- *
- * The rate sits under the name rather than beside it because the row already
- * spends its horizontal budget on badges; stacking keeps long model names and
- * several badges from squeezing the rate into an ellipsis.
  */
 function ModelOfferRow({ model, t }: {
   model: CodeBuddyWebModelBadge
@@ -186,34 +127,22 @@ function ModelSelection({ selection, onSaved, t }: {
   onSaved?: () => void
   t: CodeBuddyPluginCardInjected['t']
 }): React.ReactNode {
-  // The Host's selection as a stable key: a poll that reports the same
-  // selection must not disturb a draft, while an actual change re-seeds it.
   const hostKey = selection.choices.filter(choice => choice.enabled).map(choice => choice.id).join(',')
   const [draft, setDraft] = useState<readonly string[]>(() =>
     selection.choices.filter(choice => choice.enabled).map(choice => choice.id))
   const [seeded, setSeeded] = useState(hostKey)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  // The Host key this card's own last write should produce. Without it, the
-  // re-seed below would clear the "saved" note the instant the write landed —
-  // the confirmation would flash and vanish on the refresh that proves it
-  // worked. A key that arrives without matching this is somebody else's edit.
   const [savedKey, setSavedKey] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
 
   if (seeded !== hostKey) {
-    // Re-seed from a genuinely changed Host answer (another surface wrote the
-    // section, or our own save landed) during render, so the list never shows a
-    // draft that the document already contradicts.
     setSeeded(hostKey)
     setDraft(selection.choices.filter(choice => choice.enabled).map(choice => choice.id))
     setSaved(hostKey === savedKey)
   }
 
   const checked = new Set(draft)
-  // Saving an all-checked list would freeze today's roster into an allowlist,
-  // so "everything" is stored as the empty (unrestricted) selection instead —
-  // new upstream models then appear on their own.
   const all = selection.choices.length
   const wire: readonly string[] = draft.length === all ? [] : draft
   const stored = selection.choices.filter(choice => choice.enabled).map(choice => choice.id)
@@ -244,18 +173,12 @@ function ModelSelection({ selection, onSaved, t }: {
           : `HTTP ${String(response.status)}`
         throw new Error(message)
       }
-      // The write route answers with the resulting selection, so the key this
-      // save will produce is read from the Host's own answer rather than
-      // predicted from the draft.
       const body: unknown = await response.json().catch(() => undefined)
       const landed = (body as { selection?: CodeBuddyWebModelSelection } | undefined)?.selection
       setSavedKey(landed === undefined
         ? undefined
         : landed.choices.filter(choice => choice.enabled).map(choice => choice.id).join(','))
       setSaved(true)
-      // Re-read the status document now: the card otherwise polls once a minute,
-      // which left the save button live and the confirmation missing until the
-      // next tick even though the write had landed.
       onSaved?.()
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : t('requestFailed'))
@@ -265,8 +188,6 @@ function ModelSelection({ selection, onSaved, t }: {
   }
 
   const disabled = !selection.writable || saving
-  // The heading and the enabled/total count belong to the enclosing Section's
-  // always-visible summary line, so this body starts at the hint.
   return (
     <div className={css.quotaList}>
       <p className={css.bodyText} style={{ margin: 0 }}>
@@ -337,14 +258,17 @@ function ModelSelection({ selection, onSaved, t }: {
   )
 }
 
-/** Render CodeBuddy sign-in state and credit as one expandable card. */
+/** The horizontal tab names rendered in the card body. */
+type CardTab = 'accounts' | 'models' | 'stats' | 'remaining'
+
+/** Render CodeBuddy sign-in state and the tabbed panel as one expandable card. */
 export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
   if (t === undefined) throw new Error('CodeBuddy plugin card requires its translation function')
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState<CardTab>('accounts')
   const [status, setStatus] = useState<CodeBuddyWebStatus>({ status: 'signed-out' })
   const [busy, setBusy] = useState(false)
-  const [checkingIn, setCheckingIn] = useState(false)
-  const [checkInOutcome, setCheckInOutcome] = useState<CodeBuddyCheckInOutcome | undefined>(undefined)
+  const [remainingAccount, setRemainingAccount] = useState<string | null>(null)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -368,6 +292,11 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
       }
     }
   }, [t])
+
+  // Stable callback for child panels (AccountCards / CreditStatsPanel). Without
+  // this, every parent render rebuilds the inline arrow, which re-triggers the
+  // children's fetch/effect cycles (stats panel re-loads, login poll restarts).
+  const handleChanged = useCallback((): void => { void refresh() }, [refresh])
 
   useEffect(() => {
     if (!open) return
@@ -395,69 +324,24 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
     }
   }
 
-  /**
-   * POST the daily check-in and show the classified outcome next to the
-   * button. The Host half resolves the freshest credential itself, so the
-   * browser never touches token material.
-   */
-  const runCheckIn = async (): Promise<void> => {
-    if (checkingIn) return
-    setCheckingIn(true)
-    setCheckInOutcome(undefined)
-    try {
-      const response = await fetch(CODEBUDDY_CHECKIN_PATH, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        credentials: 'same-origin',
-        body: '{}',
-      })
-      const body: unknown = await response.json().catch(() => undefined)
-      if (!response.ok) {
-        const detail = typeof (body as { error?: unknown } | undefined)?.error === 'string'
-          ? (body as { error: string }).error
-          : `HTTP ${String(response.status)}`
-        throw new Error(detail)
-      }
-      const outcome = body as CodeBuddyCheckInOutcome
-      setCheckInOutcome(outcome)
-      // A landed check-in changes the balance; the next status poll picks the
-      // new figure up through the Host's own short-TTL credit cache.
-      if (outcome.status === 'ok') void refresh()
-    } catch (cause: unknown) {
-      setCheckInOutcome({
-        status: 'failed',
-        message: cause instanceof Error ? cause.message : t('requestFailed'),
-      })
-    } finally {
-      if (mounted.current) setCheckingIn(false)
-    }
-  }
-
-  const checkInNote = (): React.ReactNode => {
-    if (checkInOutcome === undefined) return null
-    if (checkInOutcome.status === 'ok') {
-      return (
-        <span className={css.bodyText} style={{ margin: 0 }}>
-          {checkInOutcome.message === '' ? t('checkInSuccess') : `${t('checkInSuccess')} — ${checkInOutcome.message}`}
-        </span>
-      )
-    }
-    if (checkInOutcome.status === 'already') {
-      return <span className={css.bodyText} style={{ margin: 0 }}>{t('checkInAlready')}</span>
-    }
-    return (
-      <span className={css.bodyError} style={{ margin: 0 }}>
-        {t('checkInFailed', { message: checkInOutcome.message })}
-      </span>
-    )
-  }
-
   const title = t('title')
-  const label = status.status === 'signed-in'
-    ? status.nickname === undefined ? t('signedInAs', { nickname: '' }).replace(/[:：]\s*$/, '') : t('signedInAs', { nickname: status.nickname })
-    : status.status === 'error'
-      ? t('requestFailed')
-      : t('signedOut')
+  const accounts = 'accounts' in status && status.accounts !== undefined ? status.accounts : []
+  const signedIn = status.status === 'signed-in'
+  // Remaining-credit tab: pick one account to inspect (defaults to the first).
+  const remainingOptions = accounts.map(account => ({ accountId: account.id, accountName: account.nickname ?? account.uid ?? account.id }))
+  const effectiveRemainingAccount = remainingAccount !== null && accounts.some(a => a.id === remainingAccount)
+    ? remainingAccount
+    : (accounts[0]?.id ?? null)
+  const remainingCredits = effectiveRemainingAccount !== null
+    ? accounts.find(a => a.id === effectiveRemainingAccount)?.credits
+    : undefined
+
+  const tabs: { key: CardTab; label: string }[] = [
+    { key: 'accounts', label: t('tabAccounts') },
+    { key: 'models', label: t('tabModels') },
+    { key: 'stats', label: t('tabCreditStats') },
+    { key: 'remaining', label: t('tabRemaining') },
+  ]
 
   return (
     <li className={open ? cx(css.card, css.cardOpen) : cx(css.card)}>
@@ -477,95 +361,120 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
       {open
         ? <div className={css.body}>
             <div className={css.bodyBlock}>
-              <h3 style={quotaTitleStyle}>{t('accountHeading')}</h3>
               <div className={css.bodyRow}>
                 <span className={css.statusLine} role="status">
-                  <span aria-hidden="true" className={cx(css.statusDot, statusDotClass(status.status))} />
-                  <span>{label}</span>
+                  <span aria-hidden="true" className={cx(css.statusDot,
+                    status.status === 'signed-in' ? css.statusDotSignedIn
+                      : status.status === 'error' ? css.statusDotError
+                        : css.statusDotSignedOut)} />
+                  <span>
+                    {signedIn
+                      ? (status.nickname === undefined ? t('signedInAs', { nickname: '' }).replace(/[:：]\s*$/, '') : t('signedInAs', { nickname: status.nickname }))
+                      : status.status === 'error'
+                        ? t('requestFailed')
+                        : t('signedOut')}
+                  </span>
                 </span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {status.status === 'signed-in'
-                    ? <button
-                        type="button"
-                        className={css.refresh}
-                        disabled={checkingIn}
-                        onClick={() => { void runCheckIn() }}
-                      >
-                        {checkingIn ? t('checkingIn') : t('checkIn')}
-                      </button>
-                    : null}
                   <button type="button" className={css.refresh} disabled={busy} onClick={() => { void manualRefresh() }}>
                     {busy ? t('refreshing') : t('refresh')}
                   </button>
                 </span>
               </div>
-              {status.status === 'signed-in' ? checkInNote() : null}
-              {status.status === 'signed-in'
-                ? <>
-                    {status.expiresAt === undefined ? null
-                      : <p className={css.bodyText}>{t('accessTokenExpires', { time: formatTime(status.expiresAt) })}</p>}
-                    {/* Model selection leads the body: it is the only block
-                        here the user acts on, so it sits above the read-only
-                        credit and promo reports rather than below them. */}
-                    {status.selection === undefined ? null : (
-                      <Section
-                        heading={t('optionalModelsHeading')}
-                        summary={t('optionalModelsCount', {
-                          enabled: String(status.selection.choices.filter(choice => choice.enabled).length),
-                          total: String(status.selection.choices.length),
-                        })}
-                        expandLabel={t('expand')}
-                        collapseLabel={t('collapse')}
-                      >
-                        <ModelSelection
-                          selection={status.selection}
-                          onSaved={() => { void refresh() }}
-                          t={t}
-                        />
-                      </Section>
-                    )}
-                    {status.credits === undefined ? null : (
-                      <Section
-                        heading={t('creditsHeading')}
-                        // The total rides the summary line, so it stays readable
-                        // while the twelve package bars behind it stay folded.
-                        summary={t('creditsTotal', { total: formatNumber(status.credits.total) })}
-                        expandLabel={t('expand')}
-                        collapseLabel={t('collapse')}
-                      >
-                        <div className={css.quotaList}>
-                          {status.credits.accounts
-                            .filter(account => account.remain > 0)
-                            .map((account, index) => (
-                            <CreditBar
-                              key={`${account.packageName}-${String(index)}`}
-                              label={account.packageName}
-                              remain={account.remain}
-                              size={account.size}
-                              t={t}
-                            />
-                          ))}
-                        </div>
-                      </Section>
-                    )}
-                    {status.creditsError === undefined ? null
-                      : <p className={css.bodyError}>{t('creditsError', { message: status.creditsError })}</p>}
-                    {status.models === undefined || status.models.length === 0 ? null : (
-                      <Section
-                        heading={t('modelsHeading')}
-                        summary={t('modelsOnPromo', { count: String(status.models.length) })}
-                        expandLabel={t('expand')}
-                        collapseLabel={t('collapse')}
-                      >
-                        <div className={css.quotaList}>
-                          {status.models.map(model => <ModelOfferRow key={model.id} model={model} t={t} />)}
-                        </div>
-                      </Section>
-                    )}
-                  </>
+              {signedIn && status.expiresAt !== undefined
+                ? <p className={css.bodyText}>
+                    {t('accessTokenExpires', { time: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(status.expiresAt)) })}
+                  </p>
                 : null}
-              {status.status === 'signed-out' ? <p className={css.bodyText}>{t('signedOutHint')}</p> : null}
-              {status.status === 'error' ? <p className={css.bodyError}>{status.message}</p> : null}
+
+              {/* Horizontal tab bar */}
+              <div className={css.tabBar} role="tablist" aria-label={t('accountPanelHeading')}>
+                {tabs.map(item => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === item.key}
+                    className={cx(css.tab, tab === item.key ? css.tabActive : undefined)}
+                    onClick={() => { setTab(item.key) }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              {tab === 'accounts' ? (
+                <div role="tabpanel">
+                  <AccountCards
+                    accounts={accounts}
+                    onChanged={handleChanged}
+                    t={t as unknown as import('./AccountCard.tsx').AccountCardInjected['t']}
+                  />
+                </div>
+              ) : null}
+
+              {tab === 'models' ? (
+                <div role="tabpanel">
+                  <h3 style={quotaTitleStyle}>{t('modelsHeading')}</h3>
+                  {signedIn && status.selection !== undefined ? (
+                    <ModelSelection selection={status.selection} onSaved={() => { void refresh() }} t={t} />
+                  ) : null}
+                  {signedIn && status.models !== undefined && status.models.length > 0 ? (
+                    <div className={css.quotaList}>
+                      {status.models.map(model => <ModelOfferRow key={model.id} model={model} t={t} />)}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {tab === 'stats' ? (
+                <div role="tabpanel">
+                  <CreditStatsPanel
+                    accounts={accounts}
+                    onChanged={handleChanged}
+                    t={t as unknown as import('./CreditStatsPanel.tsx').CreditStatsPanelInjected['t']}
+                  />
+                </div>
+              ) : null}
+
+              {tab === 'remaining' ? (
+                <div role="tabpanel">
+                  <h3 style={quotaTitleStyle}>{t('creditsHeading')}</h3>
+                  {signedIn && accounts.length > 1 ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 10px' }}>
+                      <AccountFilterMenu
+                        accounts={remainingOptions}
+                        accountFilter={effectiveRemainingAccount}
+                        onAccountFilterChange={setRemainingAccount}
+                        t={t as unknown as import('./CreditStatsPanel.tsx').CreditStatsPanelInjected['t']}
+                        ariaLabel={t('creditsFilterAccount')}
+                        allowAll={false}
+                      />
+                    </div>
+                  ) : null}
+                  {signedIn && remainingCredits !== undefined ? (
+                    <div className={css.quotaList}>
+                      {remainingCredits.accounts
+                        .filter(account => account.remain > 0)
+                        .map((account, index) => (
+                          <CreditBar
+                            key={`${account.packageName}-${String(index)}`}
+                            label={account.packageName}
+                            remain={account.remain}
+                            size={account.size}
+                            t={t}
+                          />
+                        ))}
+                    </div>
+                  ) : null}
+                  {signedIn && effectiveRemainingAccount !== null && remainingCredits === undefined ? (
+                    <p className={css.bodyText}>{t('creditLoading')}</p>
+                  ) : null}
+                  {signedIn && effectiveRemainingAccount !== null && remainingCredits !== undefined && remainingCredits.accounts.length === 0
+                    ? <p className={css.bodyText}>{t('creditEmpty')}</p>
+                    : null}
+                </div>
+              ) : null}
             </div>
           </div>
         : null}

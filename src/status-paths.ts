@@ -23,6 +23,24 @@ export const CODEBUDDY_MODELS_PATH = '/plugins/dsh-codebuddy-cli/enabled-models'
  */
 export const CODEBUDDY_CHECKIN_PATH = '/plugins/dsh-codebuddy-cli/check-in'
 
+/**
+ * Plugin-owned account management endpoints.
+ *
+ * The card's account panel uses these routes to start an OAuth login, poll for
+ * completion, switch the active account, and remove an account. All routes
+ * apply the same loopback/Origin gates as the other write routes.
+ */
+export const CODEBUDDY_LOGIN_START_PATH = '/plugins/dsh-codebuddy-cli/login/start'
+export const CODEBUDDY_LOGIN_POLL_PATH = '/plugins/dsh-codebuddy-cli/login/poll'
+export const CODEBUDDY_SWITCH_ACCOUNT_PATH = '/plugins/dsh-codebuddy-cli/accounts/switch'
+export const CODEBUDDY_DELETE_ACCOUNT_PATH = '/plugins/dsh-codebuddy-cli/accounts/delete'
+
+/** Optional per-account targeting on the check-in write. */
+export interface CodeBuddyCheckInRequest {
+  /** Stable account id; absent targets the resolved (active) account. */
+  id?: string
+}
+
 /** Daily check-in outcome status, already mapped for display. */
 export type CodeBuddyCheckInStatus = 'ok' | 'already' | 'failed'
 
@@ -46,11 +64,25 @@ export interface CodeBuddyCheckInOutcome {
  */
 export const CODEBUDDY_PROVIDER_ID = 'codebuddy-cli'
 
-/** One billing package and its remaining credit. */
+/** One billing package and its remaining credit, as the card renders it. */
 export interface CodeBuddyWebCreditAccount {
+  /** Package code as the upstream reports it (may be absent). */
+  packageCode?: string
   packageName: string
+  /** Total capacity of this package. */
+  total: number
+  /** Remaining capacity of this package. */
   remain: number
+  /** Used capacity of this package. */
+  used: number
+  /** Backward-compatible alias for the total. */
   size: number
+  /** Expiry as epoch milliseconds; absent means long-lived. */
+  expireAtMs?: number
+  /** Whether the package has already expired. */
+  expired: boolean
+  /** Whether the package expires within the soon window (7 days). */
+  expiringSoon: boolean
 }
 
 /** Aggregated credit answer rendered by the plugin card. */
@@ -138,9 +170,122 @@ export interface CodeBuddyEnabledModelsRequest {
   readonly enabledModels: readonly string[]
 }
 
+/** One stored account as the card's account panel renders it. */
+export interface CodeBuddyWebAccount {
+  /** Stable client-side id. */
+  id: string
+  /** Upstream user id. */
+  uid: string
+  nickname?: string
+  domain: string
+  enterpriseId?: string
+  /** Access token expiry, epoch milliseconds. */
+  expiresAtMs: number
+  /** Whether this is the currently active account. */
+  active: boolean
+  /** Full credit resources for this account (rendered as package bars). */
+  credits?: CodeBuddyWebCredits
+  /** Whether the account checked in today (undefined = unknown). */
+  checkedInToday?: boolean
+  /** When the credit answer was last fetched (epoch ms). */
+  creditUpdatedAtMs?: number
+  /** Whether a credit fetch failed for this account (message retained). */
+  creditError?: string
+}
+
+/** The login start response the card renders. */
+export interface CodeBuddyLoginStartResult {
+  /** Whether the login URL was generated successfully. */
+  ok: boolean
+  /** The URL the user should open in their browser. */
+  authUrl?: string
+  /** Internal state id used for polling. */
+  state?: string
+  /** Error message when ok is false. */
+  error?: string
+}
+
+/** The login poll response the card renders. */
+export interface CodeBuddyLoginPollResult {
+  /** Whether the login has completed (success or failure). */
+  done: boolean
+  /** The new account summary when login succeeded. */
+  account?: CodeBuddyWebAccount
+  /** Error message when login failed. */
+  error?: string
+}
+
+/** Plugin-owned credit-statistics endpoint (aggregates usage across accounts). */
+export const CODEBUDDY_CREDIT_STATS_PATH = '/plugins/dsh-codebuddy-cli/credit-stats'
+
+/** One per-request usage row, as the statistics panel renders it. */
+export interface CodeBuddyWebUsageRow {
+  requestId: string
+  model: string
+  client: string
+  credit: number
+  requestTime: string
+  date: string
+  /** Owning account id (filled on per-account aggregation). */
+  accountId?: string
+  /** Owning account display name. */
+  accountName?: string
+}
+
+/** Per-model aggregation for one day or the whole window. */
+export interface CodeBuddyWebUsageModel {
+  model: string
+  requestCount: number
+  credit: number
+}
+
+/** Daily usage point for the trend chart. */
+export interface CodeBuddyWebUsageDaily {
+  date: string
+  usage: number
+  models?: readonly CodeBuddyWebUsageModel[]
+}
+
+/** Per-account usage summary. */
+export interface CodeBuddyWebUsageAccount {
+  accountId: string
+  accountName: string
+  ok: boolean
+  usageToday: number | null
+  usage7Days: number | null
+  usageThisMonth: number | null
+  error?: string
+  /** This account's own daily series, for per-account trend filtering. */
+  daily?: readonly CodeBuddyWebUsageDaily[]
+  /** This account's own per-model aggregation. */
+  models?: readonly CodeBuddyWebUsageModel[]
+}
+
+/** Aggregated credit statistics document for the panel. */
+export interface CodeBuddyCreditStats {
+  status: 'complete' | 'partial' | 'unavailable'
+  rangeStart: string
+  rangeEnd: string
+  collectedAt: number
+  summary: {
+    usageToday: number
+    usage7Days: number
+    usageThisMonth: number
+  }
+  daily: readonly CodeBuddyWebUsageDaily[]
+  models: readonly CodeBuddyWebUsageModel[]
+  requests: readonly CodeBuddyWebUsageRow[]
+  accounts: readonly CodeBuddyWebUsageAccount[]
+  detailLimit: number
+}
+
 /** The JSON document the plugin card renders. */
 export type CodeBuddyWebStatus =
-  | { status: 'signed-out' }
+  | {
+    status: 'signed-out'
+    /** Stored accounts for the account management panel (may be empty). */
+    accounts?: readonly CodeBuddyWebAccount[]
+  }
   | {
     status: 'signed-in'
     nickname?: string
@@ -155,5 +300,7 @@ export type CodeBuddyWebStatus =
     catalog?: CodeBuddyWebRateMap
     /** Every served model with its offered state, backing the card's checkbox list. */
     selection?: CodeBuddyWebModelSelection
-  }
+    /** Stored accounts for the account management panel. */
+    accounts?: readonly CodeBuddyWebAccount[]
+    }
   | { status: 'error'; message: string }

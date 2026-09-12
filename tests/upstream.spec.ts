@@ -162,8 +162,8 @@ describe('CodeBuddyUpstreamClient.fetchCredits', () => {
 
     expect(credits.total).toBe(100)
     expect(credits.accounts).toHaveLength(2)
-    expect(credits.accounts[0]).toEqual({ packageName: 'pkg-a', remain: 40, size: 100 })
-    expect(credits.accounts[1]).toEqual({ packageName: 'pkg-b', remain: 60, size: 200 })
+    expect(credits.accounts[0]).toMatchObject({ packageName: 'pkg-a', remain: 40, size: 100, total: 100, used: 0, expired: false, expiringSoon: false })
+    expect(credits.accounts[1]).toMatchObject({ packageName: 'pkg-b', remain: 60, size: 200, total: 200, used: 0, expired: false, expiringSoon: false })
   })
 
   it('selects cycle remain when size > 0 (first branch)', async () => {
@@ -173,7 +173,7 @@ describe('CodeBuddyUpstreamClient.fetchCredits', () => {
 
     const credits = await new CodeBuddyUpstreamClient().fetchCredits(CREDENTIAL)
     // First branch: size>0 → cycleRemain, ignoring the larger CapacityRemain.
-    expect(credits.accounts[0]).toEqual({ packageName: 'pkg', remain: 30, size: 100 })
+    expect(credits.accounts[0]).toMatchObject({ packageName: 'pkg', remain: 30, size: 100 })
   })
 
   it('selects cycle remain when there is cycle usage even without size (second branch)', async () => {
@@ -183,7 +183,7 @@ describe('CodeBuddyUpstreamClient.fetchCredits', () => {
 
     const credits = await new CodeBuddyUpstreamClient().fetchCredits(CREDENTIAL)
     // Second branch: size<=0 but cycleUsed>0 → cycleRemain.
-    expect(credits.accounts[0]).toEqual({ packageName: 'pkg', remain: 20, size: 0 })
+    expect(credits.accounts[0]).toMatchObject({ packageName: 'pkg', remain: 20, size: 0 })
   })
 
   it('falls back to capacity remain when no cycle fields (third branch)', async () => {
@@ -193,7 +193,7 @@ describe('CodeBuddyUpstreamClient.fetchCredits', () => {
 
     const credits = await new CodeBuddyUpstreamClient().fetchCredits(CREDENTIAL)
     // Third branch: no size, no cycle → capacityRemain.
-    expect(credits.accounts[0]).toEqual({ packageName: 'pkg', remain: 77, size: 0 })
+    expect(credits.accounts[0]).toMatchObject({ packageName: 'pkg', remain: 77, size: 0 })
   })
 
   it('clamps a negative remain to zero', async () => {
@@ -213,7 +213,7 @@ describe('CodeBuddyUpstreamClient.fetchCredits', () => {
 
     const credits = await new CodeBuddyUpstreamClient().fetchCredits(CREDENTIAL)
     // size falls back to CapacitySize=500; remain from third branch = 120.
-    expect(credits.accounts[0]).toEqual({ packageName: 'pkg', remain: 120, size: 500 })
+    expect(credits.accounts[0]).toMatchObject({ packageName: 'pkg', remain: 120, size: 500 })
   })
 
   it('labels a missing package name as (unnamed)', async () => {
@@ -355,5 +355,98 @@ describe('CodeBuddyUpstreamClient.checkIn', () => {
     const outcome = await new CodeBuddyUpstreamClient().checkIn({ ...CREDENTIAL, domain: 'www.workbuddy.ai' })
     expect(outcome.status).toBe('failed')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('CodeBuddyUpstreamClient.fetchUsage', () => {
+  /** Build an official-usage page envelope. */
+  function usageEnvelope(total: number, rows: unknown[]): string {
+    return JSON.stringify({ code: 0, msg: 'ok', data: { total, data: rows } })
+  }
+
+  function nowParts(daysAgo = 0): { date: string; time: string } {
+    const date = new Date()
+    date.setDate(date.getDate() - daysAgo)
+    const pad = (v: number): string => String(v).padStart(2, '0')
+    const dateKey = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    return { date: dateKey, time: `${dateKey} 12:00:00` }
+  }
+
+  it('aggregates today, 7-day, month, daily and per-model usage', async () => {
+    const today = nowParts(0)
+    const yesterday = nowParts(1)
+    const old = nowParts(10)
+    const rows = [
+      { requestId: 'r1', credit: 1.5, model: 'model-a', client: 'cli', requestTime: today.time },
+      { requestId: 'r2', credit: 2, model: 'model-a', client: 'cli', requestTime: yesterday.time },
+      { requestId: 'r3', credit: 5, model: 'model-b', client: 'cli', requestTime: old.time },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => fakeResponse(usageEnvelope(3, rows))))
+
+    const stats = await new CodeBuddyUpstreamClient().fetchUsage(CREDENTIAL)
+
+    expect(stats.status).toBe('complete')
+    expect(stats.summary.usageToday).toBeCloseTo(1.5)
+    expect(stats.summary.usage7Days).toBeCloseTo(3.5)
+    expect(stats.summary.usageThisMonth).toBeGreaterThanOrEqual(8.5)
+    expect(stats.requests).toHaveLength(3)
+    expect(stats.requests[0]!.requestId).toBe('r1')
+    // Daily series is zero-filled across the whole window.
+    expect(stats.daily.length).toBeGreaterThan(20)
+    const todayPoint = stats.daily.find(d => d.date === today.date)
+    expect(todayPoint?.usage).toBeCloseTo(1.5)
+    // Per-model aggregation.
+    const modelA = stats.models.find(m => m.model === 'model-a')
+    expect(modelA?.requestCount).toBe(2)
+    expect(modelA?.credit).toBeCloseTo(3.5)
+  })
+
+  it('paginates when the first page is incomplete', async () => {
+    const today = nowParts(0)
+    const page1 = usageEnvelope(2, [
+      { requestId: 'r1', credit: 1, model: 'm', client: 'cli', requestTime: today.time },
+    ])
+    const page2 = usageEnvelope(2, [
+      { requestId: 'r2', credit: 2, model: 'm', client: 'cli', requestTime: today.time },
+    ])
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(fakeResponse(page1))
+      .mockResolvedValueOnce(fakeResponse(page2))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const stats = await new CodeBuddyUpstreamClient().fetchUsage(CREDENTIAL)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(stats.summary.usageToday).toBeCloseTo(3)
+    expect(stats.requests).toHaveLength(2)
+  })
+
+  it('returns unavailable when the upstream reports an error code', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => fakeResponse(JSON.stringify({ code: 500, msg: 'usage down' }))))
+
+    const stats = await new CodeBuddyUpstreamClient().fetchUsage(CREDENTIAL)
+    expect(stats.status).toBe('unavailable')
+    expect(stats.requests).toEqual([])
+  })
+
+  it('returns unavailable on a transport error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connect refused') }))
+
+    const stats = await new CodeBuddyUpstreamClient().fetchUsage(CREDENTIAL)
+    expect(stats.status).toBe('unavailable')
+    expect(stats.summary.usageToday).toBe(0)
+  })
+
+  it('skips rows with invalid or negative credit', async () => {
+    const today = nowParts(0)
+    const rows = [
+      { requestId: 'good', credit: 1, model: 'm', client: 'cli', requestTime: today.time },
+      { requestId: 'bad-credit', credit: -5, model: 'm', client: 'cli', requestTime: today.time },
+      { requestId: 'bad-time', credit: 2, model: 'm', client: 'cli', requestTime: 'not-a-date' },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => fakeResponse(usageEnvelope(3, rows))))
+
+    const stats = await new CodeBuddyUpstreamClient().fetchUsage(CREDENTIAL)
+    expect(stats.requests).toHaveLength(1)
+    expect(stats.requests[0]!.requestId).toBe('good')
   })
 })

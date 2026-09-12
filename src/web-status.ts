@@ -11,28 +11,65 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { CodeBuddyCredentialStore } from './auth.ts'
 import type { CodeBuddyUpstreamClient } from './upstream.ts'
+import type { AccountStore, AccountSummary } from './account-store.ts'
+import type { CodeBuddyClientIdentity } from './client-identity.ts'
 import { normalizeCredits } from './upstream.ts'
 import { filterEnabledModels } from './catalog.ts'
 import type { CodeBuddyModelInfo } from './catalog.ts'
 import { hostIsLoopback, originIsLoopback } from './loopback.ts'
-import { CODEBUDDY_CHECKIN_PATH, CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH } from './status-paths.ts'
+import { generateAccountId } from './oauth.ts'
+import {
+  CODEBUDDY_CHECKIN_PATH,
+  CODEBUDDY_MODELS_PATH,
+  CODEBUDDY_STATUS_PATH,
+  CODEBUDDY_LOGIN_START_PATH,
+  CODEBUDDY_LOGIN_POLL_PATH,
+  CODEBUDDY_SWITCH_ACCOUNT_PATH,
+  CODEBUDDY_DELETE_ACCOUNT_PATH,
+  CODEBUDDY_CREDIT_STATS_PATH,
+} from './status-paths.ts'
 import type {
   CodeBuddyCheckInOutcome,
+  CodeBuddyCheckInRequest,
+  CodeBuddyWebAccount,
   CodeBuddyWebCredits,
   CodeBuddyWebModelBadge,
   CodeBuddyWebModelChoice,
   CodeBuddyWebModelSelection,
   CodeBuddyWebRateMap,
   CodeBuddyWebStatus,
+  CodeBuddyLoginStartResult,
+  CodeBuddyLoginPollResult,
+  CodeBuddyCreditStats,
+  CodeBuddyWebUsageAccount,
+  CodeBuddyWebUsageDaily,
+  CodeBuddyWebUsageRow,
 } from './status-paths.ts'
 
-export { CODEBUDDY_MODELS_PATH, CODEBUDDY_STATUS_PATH, CODEBUDDY_CHECKIN_PATH } from './status-paths.ts'
-export type { CodeBuddyWebStatus, CodeBuddyCheckInOutcome } from './status-paths.ts'
+export {
+  CODEBUDDY_MODELS_PATH,
+  CODEBUDDY_STATUS_PATH,
+  CODEBUDDY_CHECKIN_PATH,
+  CODEBUDDY_LOGIN_START_PATH,
+  CODEBUDDY_LOGIN_POLL_PATH,
+  CODEBUDDY_SWITCH_ACCOUNT_PATH,
+  CODEBUDDY_DELETE_ACCOUNT_PATH,
+  CODEBUDDY_CREDIT_STATS_PATH,
+} from './status-paths.ts'
+export type {
+  CodeBuddyWebStatus,
+  CodeBuddyCheckInOutcome,
+  CodeBuddyLoginStartResult,
+  CodeBuddyLoginPollResult,
+  CodeBuddyCreditStats,
+} from './status-paths.ts'
 
 /** Constructor dependencies. */
 export interface CodeBuddyStatusRouteOptions {
   store: CodeBuddyCredentialStore
   client: Pick<CodeBuddyUpstreamClient, 'fetchCredits'>
+  /** Official-usage fetch for credit statistics (optional; absent disables the panel). */
+  fetchUsage?: (credential: import('./auth.ts').CodeBuddyCredential) => Promise<import('./upstream.ts').CodeBuddyUsageStats>
   /** Resolve the current model catalog for free/badge display. */
   models: () => readonly CodeBuddyModelInfo[]
   /** Read the stored enabled-model allowlist; undefined means no restriction. */
@@ -49,6 +86,16 @@ export interface CodeBuddyStatusRouteOptions {
    * route answers 501, which the card renders as unavailable.
    */
   checkIn?: (credential: import('./auth.ts').CodeBuddyCredential) => Promise<CodeBuddyCheckInOutcome>
+  /** Refresh a specific account credential (targeted check-in with an expired token). */
+  refreshToken?: (credential: import('./auth.ts').CodeBuddyCredential) => Promise<import('./upstream.ts').CodeBuddyRefreshOutcome>
+  /** Multi-account store; when present, the card shows the account panel. */
+  accountStore?: AccountStore
+  /** Start an OAuth login, returning an authUrl and state. */
+  loginStart?: (identity: CodeBuddyClientIdentity) => Promise<{ authUrl: string; state: string }>
+  /** Poll an OAuth login once; returns the account when done, undefined when pending. */
+  loginPoll?: (state: string, identity: CodeBuddyClientIdentity) => Promise<import('./oauth.ts').OAuthLoginResult | undefined>
+  /** Resolve the current client identity for OAuth headers. */
+  resolveIdentity?: () => Promise<CodeBuddyClientIdentity>
 }
 
 /** Largest enabled-model write the route accepts (bounds an untrusted body). */
@@ -66,6 +113,19 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body)
   res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) })
   res.end(payload)
+}
+
+/** Local calendar date as `YYYY-MM-DD` (used to decide "checked in today"). */
+function localDateKey(now = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+/** Whether a stored check-in record means "already checked in today". */
+function checkedInToday(record: AccountSummary['lastCheckIn'], today: string): boolean {
+  return record !== undefined
+    && record.date === today
+    && (record.result === 'ok' || record.result === 'already')
 }
 
 /**
@@ -214,6 +274,76 @@ export async function codeBuddyWebStatus(
   return statusWithCatalog
 }
 
+/** Convert an AccountSummary to the web-facing shape. */
+function toWebAccount(summary: AccountSummary): CodeBuddyWebAccount {
+  const account: CodeBuddyWebAccount = {
+    id: summary.id,
+    uid: summary.uid,
+    domain: summary.domain,
+    expiresAtMs: summary.expiresAtMs,
+    active: summary.active,
+  }
+  if (summary.nickname !== undefined) account.nickname = summary.nickname
+  if (summary.enterpriseId !== undefined) account.enterpriseId = summary.enterpriseId
+  return account
+}
+
+/**
+ * Inject stored accounts into a status document, whether signed-in or
+ * signed-out. Each stored account carries its own credit resources (fetched
+ * from the upstream, TTL-cached) and a refresh timestamp, so the card's
+ * per-account cards render package bars and expiry without a second round
+ * trip. When no account store is attached, the field is omitted entirely.
+ */
+export async function withAccounts(
+  deps: CodeBuddyStatusRouteOptions,
+  status: CodeBuddyWebStatus,
+): Promise<CodeBuddyWebStatus> {
+  if (deps.accountStore === undefined) return status
+  // The error branch carries no account fields in its shape; only the
+  // signed-in / signed-out document kinds carry the optional `accounts`.
+  if (status.status === 'error') return status
+  try {
+    const summaries = await deps.accountStore.summaries()
+    const today = localDateKey()
+    const accounts = await Promise.all(summaries.map(async (summary) => {
+      const account = toWebAccount(summary)
+      const accountWithCheckIn: CodeBuddyWebAccount = summary.lastCheckIn === undefined
+        ? account
+        : { ...account, checkedInToday: checkedInToday(summary.lastCheckIn, today) }
+      const credential = await deps.accountStore!.credentialFor(summary.id)
+      if (credential === undefined) return accountWithCheckIn
+      const cached = accountCreditsCache.get(summary.id)
+      if (cached !== undefined && Date.now() - cached.at < ACCOUNT_CREDIT_TTL_MS) {
+        return { ...accountWithCheckIn, ...cached.payload }
+      }
+      const startedAt = Date.now()
+      try {
+        const credits = await deps.client.fetchCredits(credential)
+        const payload = {
+          credits,
+          creditUpdatedAtMs: startedAt,
+        }
+        accountCreditsCache.set(summary.id, { at: startedAt, payload })
+        return { ...accountWithCheckIn, ...payload }
+      } catch (error: unknown) {
+        const payload = { creditError: safeMessage(error) }
+        accountCreditsCache.set(summary.id, { at: startedAt, payload })
+        return { ...accountWithCheckIn, ...payload }
+      }
+    }))
+    if (status.status === 'signed-in') return { ...status, accounts }
+    return { status: 'signed-out', accounts }
+  } catch {
+    return status
+  }
+}
+
+/** Per-account credit answers, so concurrent polls share one upstream call. */
+const accountCreditsCache = new Map<string, { at: number; payload: Record<string, unknown> }>()
+/** TTL for per-account credit answers within one process. */
+const ACCOUNT_CREDIT_TTL_MS = 30_000
+
 /** The status route's request handler, extracted so tests can mount it on a bare server. */
 export function codeBuddyStatusHandler(
   deps: CodeBuddyStatusRouteOptions,
@@ -229,7 +359,8 @@ export function codeBuddyStatusHandler(
       return
     }
     try {
-      json(res, 200, await codeBuddyWebStatus(deps, creditsCache))
+      const status = await codeBuddyWebStatus(deps, creditsCache)
+      json(res, 200, await withAccounts(deps, status))
     } catch (error: unknown) {
       json(res, 500, { error: safeMessage(error) })
     }
@@ -254,6 +385,66 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('error', reject)
   })
 }
+
+/** Parse the check-in body `{id?}`; undefined when the JSON is malformed or not an object. */
+async function parseCheckInBody(req: IncomingMessage): Promise<CodeBuddyCheckInRequest | undefined> {
+  let body: string
+  try {
+    body = await readBody(req)
+  } catch {
+    return undefined
+  }
+  if (body.trim() === '') return {}
+  try {
+    const candidate: unknown = JSON.parse(body)
+    if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) return undefined
+    return candidate as CodeBuddyCheckInRequest
+  } catch {
+    return undefined
+  }
+}
+
+/** Refresh a targeted account credential when its token is near/over expiry. */
+async function refreshIfNeeded(
+  deps: CodeBuddyStatusRouteOptions,
+  credential: import('./auth.ts').CodeBuddyCredential,
+): Promise<import('./auth.ts').CodeBuddyCredential> {
+  const margin = 5 * 60 * 1000
+  if (deps.refreshToken === undefined || credential.expiresAtMs > Date.now() + margin) return credential
+  const outcome = await deps.refreshToken(credential)
+  const refreshed: import('./auth.ts').CodeBuddyCredential = {
+    ...credential,
+    accessToken: outcome.accessToken,
+    ...outcome.refreshToken === undefined ? {} : { refreshToken: outcome.refreshToken },
+    expiresAtMs: outcome.expiresInSec !== undefined
+      ? Date.now() + outcome.expiresInSec * 1000
+      : credential.expiresAtMs,
+    ...outcome.domain === undefined || outcome.domain === '' ? {} : { domain: outcome.domain },
+  }
+  // Persist the refreshed token back into the account slot.
+  if (credential.uid !== '' && deps.accountStore !== undefined) {
+    const doc = await deps.accountStore.read()
+    const id = Object.keys(doc.accounts).find(key => doc.accounts[key]?.uid === credential.uid)
+    if (id !== undefined) {
+      await deps.accountStore.updateTokens(id, {
+        accessToken: refreshed.accessToken,
+        ...outcome.refreshToken !== undefined ? { refreshToken: outcome.refreshToken } : {},
+        expiresAtMs: refreshed.expiresAtMs,
+        ...refreshed.refreshExpiresAtMs !== undefined ? { refreshExpiresAtMs: refreshed.refreshExpiresAtMs } : {},
+        ...outcome.domain === undefined || outcome.domain === '' ? {} : { domain: outcome.domain },
+      })
+    }
+  }
+  return refreshed
+}
+
+/** The currently active account id, or undefined when none is stored/active. */
+async function activeAccountId(deps: CodeBuddyStatusRouteOptions): Promise<string | undefined> {
+  if (deps.accountStore === undefined) return undefined
+  const doc = await deps.accountStore.read()
+  return doc.activeId !== undefined && doc.accounts[doc.activeId] !== undefined ? doc.activeId : undefined
+}
+
 
 /**
  * Parse the write body into a clean allowlist, or undefined when the body is
@@ -368,10 +559,35 @@ export function codeBuddyCheckInHandler(
       return
     }
     try {
-      // `resolve` refreshes the token on demand, so the check-in always rides
-      // a credential the upstream will accept rather than the stored one.
-      const credential = await deps.store.resolve()
+      // An optional `{id}` body targets a specific stored account; otherwise the
+      // check-in rides the resolved (active) credential. A malformed body is a
+      // client error, not a silent fallback to the active account.
+      const parsed = await parseCheckInBody(req)
+      if (parsed === undefined) {
+        json(res, 400, { error: 'expected {"id"?: string}' })
+        return
+      }
+      const targetId = typeof parsed.id === 'string' && parsed.id !== '' ? parsed.id : undefined
+      let credential: import('./auth.ts').CodeBuddyCredential
+      if (targetId !== undefined && deps.accountStore !== undefined) {
+        const target = await deps.accountStore.credentialFor(targetId)
+        if (target === undefined) {
+          json(res, 404, { error: 'account-not-found' })
+          return
+        }
+        // The active path (`resolve()`) refreshes on demand; a targeted account
+        // does not, so refresh here when the stored token is about to expire.
+        credential = await refreshIfNeeded(deps, target)
+      } else {
+        credential = await deps.store.resolve()
+      }
       const outcome = await deps.checkIn(credential)
+      // Record the result for the toast and the checked-in badge, for both the
+      // targeted and the active path.
+      const recordId = targetId ?? (await activeAccountId(deps))
+      if (recordId !== undefined) {
+        await deps.accountStore?.recordCheckIn(recordId, localDateKey(), outcome.status)
+      }
       json(res, 200, outcome)
     } catch (error: unknown) {
       json(res, 500, { error: safeMessage(error) })
@@ -379,7 +595,7 @@ export function codeBuddyCheckInHandler(
   }
 }
 
-/** Mount the GET status route, the selection write route, and the daily check-in route. */
+/** Mount the GET status route, the selection write route, the daily check-in route, and the account management routes. */
 export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatusRouteOptions): void {
   ctx.effect(() => {
     // One memo per route: the card and the dock both poll this handler, and
@@ -400,10 +616,418 @@ export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatus
       path: CODEBUDDY_CHECKIN_PATH,
       handler: codeBuddyCheckInHandler(deps),
     })
+    const disposeLoginStart = ctx.webServer.register({
+      kind: 'exact',
+      path: CODEBUDDY_LOGIN_START_PATH,
+      handler: codeBuddyLoginStartHandler(deps),
+    })
+    const disposeLoginPoll = ctx.webServer.register({
+      kind: 'exact',
+      path: CODEBUDDY_LOGIN_POLL_PATH,
+      handler: codeBuddyLoginPollHandler(deps),
+    })
+    const disposeSwitch = ctx.webServer.register({
+      kind: 'exact',
+      path: CODEBUDDY_SWITCH_ACCOUNT_PATH,
+      handler: codeBuddySwitchAccountHandler(deps),
+    })
+    const disposeDelete = ctx.webServer.register({
+      kind: 'exact',
+      path: CODEBUDDY_DELETE_ACCOUNT_PATH,
+      handler: codeBuddyDeleteAccountHandler(deps),
+    })
+    const disposeCreditStats = ctx.webServer.register({
+      kind: 'exact',
+      path: CODEBUDDY_CREDIT_STATS_PATH,
+      handler: codeBuddyCreditStatsHandler(deps),
+    })
     return () => {
       dispose()
       disposeModels()
       disposeCheckIn()
+      disposeLoginStart()
+      disposeLoginPoll()
+      disposeSwitch()
+      disposeDelete()
+      disposeCreditStats()
     }
   }, 'dsh-codebuddy-cli: Web status route')
+}
+
+/** Check loopback Host + Origin + JSON content type for a mutating POST. */
+function checkLoopbackPost(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!hostIsLoopback(req.headers.host) || !originIsLoopback(req.headers.origin)) {
+    json(res, 403, { error: 'request-not-trusted' })
+    return false
+  }
+  if (typeof req.headers.origin !== 'string') {
+    json(res, 403, { error: 'origin-required' })
+    return false
+  }
+  const type = req.headers['content-type']
+  if (typeof type !== 'string' || !type.trim().toLowerCase().startsWith('application/json')) {
+    json(res, 415, { error: 'content-type must be application/json' })
+    return false
+  }
+  return true
+}
+
+/**
+ * The login-start handler. POSTs to the upstream state endpoint and returns
+ * the authUrl + state. The card opens the authUrl in a new tab and then polls
+ * the poll endpoint.
+ */
+export function codeBuddyLoginStartHandler(
+  deps: CodeBuddyStatusRouteOptions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      json(res, 405, { error: 'method not allowed' })
+      return
+    }
+    if (!checkLoopbackPost(req, res)) return
+    if (deps.loginStart === undefined || deps.resolveIdentity === undefined) {
+      json(res, 501, { error: 'login-unavailable' })
+      return
+    }
+    try {
+      const identity = await deps.resolveIdentity()
+      const { authUrl, state } = await deps.loginStart(identity)
+      json(res, 200, { ok: true, authUrl, state } satisfies CodeBuddyLoginStartResult)
+    } catch (error: unknown) {
+      json(res, 200, { ok: false, error: safeMessage(error) } satisfies CodeBuddyLoginStartResult)
+    }
+  }
+}
+
+/**
+ * The login-poll handler. Polls the upstream token endpoint once; on success
+ * stores the account and returns it. The card polls this every few seconds.
+ */
+export function codeBuddyLoginPollHandler(
+  deps: CodeBuddyStatusRouteOptions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      json(res, 405, { error: 'method not allowed' })
+      return
+    }
+    if (!checkLoopbackPost(req, res)) return
+    if (deps.loginPoll === undefined || deps.resolveIdentity === undefined || deps.accountStore === undefined) {
+      json(res, 501, { error: 'login-unavailable' })
+      return
+    }
+    try {
+      const body = await readBody(req)
+      let parsed: { state?: unknown }
+      try {
+        parsed = JSON.parse(body)
+      } catch {
+        json(res, 400, { error: 'expected {"state": string}' })
+        return
+      }
+      const state = typeof parsed.state === 'string' ? parsed.state : ''
+      if (state === '') {
+        json(res, 400, { error: 'expected {"state": string}' })
+        return
+      }
+      const identity = await deps.resolveIdentity()
+      const result = await deps.loginPoll(state, identity)
+      if (result === undefined) {
+        json(res, 200, { done: false } satisfies CodeBuddyLoginPollResult)
+        return
+      }
+      // Store the new account and set it active.
+      const id = generateAccountId()
+      const stored = await deps.accountStore.add({
+        id,
+        uid: result.uid,
+        ...result.nickname !== undefined ? { nickname: result.nickname } : {},
+        domain: result.domain,
+        ...result.enterpriseId !== undefined ? { enterpriseId: result.enterpriseId } : {},
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        expiresAtMs: result.expiresAtMs,
+        ...result.refreshExpiresAtMs !== undefined ? { refreshExpiresAtMs: result.refreshExpiresAtMs } : {},
+      })
+      await deps.accountStore.setActive(id)
+      json(res, 200, {
+        done: true,
+        account: toWebAccount({ ...stored, active: true }),
+      } satisfies CodeBuddyLoginPollResult)
+    } catch (error: unknown) {
+      json(res, 200, { done: true, error: safeMessage(error) } satisfies CodeBuddyLoginPollResult)
+    }
+  }
+}
+
+/**
+ * The switch-account handler. Sets the active account by id.
+ */
+export function codeBuddySwitchAccountHandler(
+  deps: CodeBuddyStatusRouteOptions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      json(res, 405, { error: 'method not allowed' })
+      return
+    }
+    if (!checkLoopbackPost(req, res)) return
+    if (deps.accountStore === undefined) {
+      json(res, 501, { error: 'accounts-unavailable' })
+      return
+    }
+    try {
+      const body = await readBody(req)
+      let parsed: { id?: unknown }
+      try {
+        parsed = JSON.parse(body)
+      } catch {
+        json(res, 400, { error: 'expected {"id": string}' })
+        return
+      }
+      const id = typeof parsed.id === 'string' ? parsed.id : ''
+      if (id === '') {
+        json(res, 400, { error: 'expected {"id": string}' })
+        return
+      }
+      const ok = await deps.accountStore.setActive(id)
+      if (!ok) {
+        json(res, 404, { error: 'account not found' })
+        return
+      }
+      json(res, 200, { ok: true })
+    } catch (error: unknown) {
+      json(res, 500, { error: safeMessage(error) })
+    }
+  }
+}
+
+/**
+ * The delete-account handler. Removes an account by id.
+ */
+export function codeBuddyDeleteAccountHandler(
+  deps: CodeBuddyStatusRouteOptions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      json(res, 405, { error: 'method not allowed' })
+      return
+    }
+    if (!checkLoopbackPost(req, res)) return
+    if (deps.accountStore === undefined) {
+      json(res, 501, { error: 'accounts-unavailable' })
+      return
+    }
+    try {
+      const body = await readBody(req)
+      let parsed: { id?: unknown }
+      try {
+        parsed = JSON.parse(body)
+      } catch {
+        json(res, 400, { error: 'expected {"id": string}' })
+        return
+      }
+      const id = typeof parsed.id === 'string' ? parsed.id : ''
+      if (id === '') {
+        json(res, 400, { error: 'expected {"id": string}' })
+        return
+      }
+      const ok = await deps.accountStore.remove(id)
+      if (!ok) {
+        json(res, 404, { error: 'account not found' })
+        return
+      }
+      json(res, 200, { ok: true })
+    } catch (error: unknown) {
+      json(res, 500, { error: safeMessage(error) })
+    }
+  }
+}
+
+/** Per-account usage answers, so repeated panel visits share one fetch. */
+const usageCache = new Map<string, { at: number; stats: import('./upstream.ts').CodeBuddyUsageStats }>()
+/** TTL for per-account usage answers within one process. */
+const USAGE_CACHE_TTL_MS = 5 * 60 * 1000
+
+/**
+ * Build the aggregated credit-statistics document by fetching each stored
+ * account's official usage (cached per account) and merging the results.
+ */
+async function buildCreditStats(deps: CodeBuddyStatusRouteOptions): Promise<CodeBuddyCreditStats> {
+  if (deps.accountStore === undefined) {
+    throw new Error('account store unavailable')
+  }
+  if (deps.fetchUsage === undefined) {
+    throw new Error('official-usage fetch unavailable')
+  }
+  const fetchUsage = deps.fetchUsage
+  const accountList = await deps.accountStore.summaries()
+  const collectedAt = Date.now()
+  const accountStats: CodeBuddyWebUsageAccount[] = []
+  const dailyMap = new Map<string, CodeBuddyWebUsageDaily>()
+  const modelMap = new Map<string, { requestCount: number; credit: number }>()
+  let allRequests: { ts: number; row: CodeBuddyWebUsageRow }[] = []
+  let successCount = 0
+  let today = 0
+  let week = 0
+  let month = 0
+  const monthPrefix = new Date().getFullYear().toString() + '-' + (new Date().getMonth() + 1).toString().padStart(2, '0')
+
+  await Promise.all(accountList.map(async (account) => {
+    const credential = await deps.accountStore!.credentialFor(account.id)
+    if (credential === undefined) return
+    const cacheHit = usageCache.get(account.id)
+    let stats: import('./upstream.ts').CodeBuddyUsageStats
+    if (cacheHit !== undefined && Date.now() - cacheHit.at < USAGE_CACHE_TTL_MS) {
+      stats = cacheHit.stats
+    } else {
+      try {
+        stats = await fetchUsage(credential)
+        usageCache.set(account.id, { at: Date.now(), stats })
+      } catch (error: unknown) {
+        accountStats.push({
+          accountId: account.id,
+          accountName: account.nickname ?? account.uid ?? account.id,
+          ok: false,
+          usageToday: null,
+          usage7Days: null,
+          usageThisMonth: null,
+          error: safeMessage(error),
+        })
+        return
+      }
+    }
+    if (stats.status === 'unavailable') {
+      accountStats.push({
+        accountId: account.id,
+        accountName: account.nickname ?? account.uid ?? account.id,
+        ok: false,
+        usageToday: null,
+        usage7Days: null,
+        usageThisMonth: null,
+      })
+      return
+    }
+    successCount += 1
+    accountStats.push({
+      accountId: account.id,
+      accountName: account.nickname ?? account.uid ?? account.id,
+      ok: true,
+      usageToday: stats.summary.usageToday,
+      usage7Days: stats.summary.usage7Days,
+      usageThisMonth: stats.summary.usageThisMonth,
+      daily: stats.daily,
+      models: stats.models,
+    })
+    today += stats.summary.usageToday
+    week += stats.summary.usage7Days
+    month += stats.summary.usageThisMonth
+    for (const daily of stats.daily) {
+      const existing = dailyMap.get(daily.date) ?? { date: daily.date, usage: 0 }
+      existing.usage += daily.usage
+      if (daily.models !== undefined) {
+        const models = existing.models === undefined ? [] : [...existing.models]
+        for (const model of daily.models) {
+          const idx = models.findIndex(m => m.model === model.model)
+          const current = idx !== -1 ? models[idx] : undefined
+          if (current !== undefined) {
+            models[idx] = {
+              ...current,
+              requestCount: current.requestCount + model.requestCount,
+              credit: current.credit + model.credit,
+            }
+          } else {
+            models.push({ ...model })
+          }
+        }
+        existing.models = models
+      }
+      dailyMap.set(daily.date, existing)
+    }
+    for (const model of stats.models) {
+      const existing = modelMap.get(model.model) ?? { requestCount: 0, credit: 0 }
+      existing.requestCount += model.requestCount
+      existing.credit += model.credit
+      modelMap.set(model.model, existing)
+    }
+    allRequests.push(...stats.requests.map((row, index) => ({
+      ts: row.ts - index / 1e6,
+      row: {
+        requestId: row.requestId,
+        model: row.model,
+        client: row.client,
+        credit: row.credit,
+        requestTime: row.requestTime,
+        date: row.date,
+        accountId: account.id,
+        accountName: account.nickname ?? account.uid ?? account.id,
+      },
+    })))
+  }))
+
+  const status: CodeBuddyCreditStats['status'] = accountList.length === 0
+    ? 'unavailable'
+    : successCount === accountList.length
+      ? 'complete'
+      : successCount > 0
+        ? 'partial'
+        : 'unavailable'
+  const daily = [...dailyMap.values()]
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
+  const sortedRequests = allRequests.sort((a, b) => b.ts - a.ts).map(entry => entry.row)
+  const detailLimit = 100
+  return {
+    status,
+    rangeStart: daily.length > 0 ? daily[0]!.date : '',
+    rangeEnd: daily.length > 0 ? daily[daily.length - 1]!.date : '',
+    collectedAt,
+    summary: { usageToday: today, usage7Days: week, usageThisMonth: month },
+    daily,
+    models: [...modelMap.entries()]
+      .map(([model, { requestCount, credit }]) => ({ model, requestCount, credit }))
+      .sort((a, b) => b.credit - a.credit || b.requestCount - a.requestCount || a.model.localeCompare(b.model)),
+    requests: sortedRequests.slice(0, detailLimit),
+    accounts: accountStats,
+    detailLimit,
+  }
+}
+
+/**
+ * The credit-statistics handler. GET returns the cached-or-fresh aggregated
+ * statistics; POST with `{refresh: true}` forces a re-fetch of every account's
+ * official usage. The panel uses this to show today / 7-day / month totals,
+ * a daily trend chart, per-model breakdown and the recent request list.
+ */
+export function codeBuddyCreditStatsHandler(
+  deps: CodeBuddyStatusRouteOptions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (!loopbackRequest(req)) {
+      json(res, 403, { error: 'request-not-trusted' })
+      return
+    }
+    let refresh = false
+    if (req.method === 'POST') {
+      if (!checkLoopbackPost(req, res)) return
+      try {
+        const body = await readBody(req)
+        const parsed: unknown = JSON.parse(body)
+        refresh = (parsed as { refresh?: unknown } | null | undefined)?.refresh === true
+      } catch {
+        json(res, 400, { error: 'expected {"refresh": boolean}' })
+        return
+      }
+    } else if (req.method !== 'GET') {
+      json(res, 405, { error: 'method not allowed' })
+      return
+    }
+    try {
+      if (refresh) usageCache.clear()
+      const stats = await buildCreditStats(deps)
+      json(res, 200, stats satisfies CodeBuddyCreditStats)
+    } catch (error: unknown) {
+      json(res, 500, { error: safeMessage(error) })
+    }
+  }
 }

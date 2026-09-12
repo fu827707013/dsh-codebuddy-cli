@@ -20,6 +20,7 @@ import { basename, join } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type { CodeBuddyRefreshOutcome } from './upstream.ts'
+import type { AccountStore } from './account-store.ts'
 
 /** Normalized CodeBuddy credential, timestamps in epoch milliseconds. */
 export interface CodeBuddyCredential {
@@ -55,6 +56,8 @@ export interface CodeBuddyStoreOptions {
   refresh: (credential: CodeBuddyCredential) => Promise<CodeBuddyRefreshOutcome>
   /** Refresh this long before actual expiry; default five minutes. */
   refreshMarginMs?: number
+  /** Multi-account store; when present, its active account wins over the CLI file. */
+  accountStore?: AccountStore
 }
 
 /** Basename of the plugin-owned credential copy inside the Harness home. */
@@ -333,12 +336,14 @@ export class CodeBuddyCredentialStore {
   private readonly ownPath: string
   private cliPathOverride: string | undefined
   private inflight: Promise<CodeBuddyCredential> | undefined
+  private readonly accountStore: AccountStore | undefined
 
   constructor(options: CodeBuddyStoreOptions) {
     this.refresh = options.refresh
     this.refreshMarginMs = options.refreshMarginMs ?? 5 * 60 * 1000
     this.ownPath = options.ownPath ?? codebuddyOwnAuthPath()
     this.cliPathOverride = options.cliPath
+    this.accountStore = options.accountStore
   }
 
   /**
@@ -381,6 +386,14 @@ export class CodeBuddyCredentialStore {
 
   /** Read the freshest stored credential without refreshing anything. */
   async current(): Promise<CodeBuddyCredential | undefined> {
+    // The multi-account store's active account wins over everything: the user
+    // explicitly added it and switched to it, so its credential is the one
+    // the plugin should serve. Falls through to the CLI/own path when no
+    // account is active (preserving the original single-account behavior).
+    if (this.accountStore !== undefined) {
+      const active = await this.accountStore.activeCredential()
+      if (active !== undefined) return active
+    }
     const [cli, own] = await Promise.all([this.readCli(), this.readOwn()])
     if (cli === undefined) return own
     if (own === undefined) return cli
@@ -454,6 +467,26 @@ export class CodeBuddyCredentialStore {
           : credential.expiresAtMs,
         ...outcome.domain === undefined || outcome.domain === '' ? {} : { domain: outcome.domain },
         source: 'dsh',
+      }
+      // When the credential came from the multi-account store, write the
+      // refresh back there so subsequent reads pick up the new token. The
+      // own-file copy is also written as a fallback for the CLI-file path.
+      // Match the *refreshed account* by uid so a switch that races the refresh
+      // never writes A's new token into the currently-active B's slot.
+      if (this.accountStore !== undefined) {
+        const doc = await this.accountStore.read()
+        const targetId = credential.uid !== ''
+          ? Object.keys(doc.accounts).find(id => doc.accounts[id]?.uid === credential.uid)
+          : (doc.activeId !== undefined && doc.accounts[doc.activeId] !== undefined ? doc.activeId : undefined)
+        if (targetId !== undefined) {
+          await this.accountStore.updateTokens(targetId, {
+            accessToken: refreshed.accessToken,
+            ...outcome.refreshToken !== undefined ? { refreshToken: outcome.refreshToken } : {},
+            expiresAtMs: refreshed.expiresAtMs,
+            ...refreshed.refreshExpiresAtMs !== undefined ? { refreshExpiresAtMs: refreshed.refreshExpiresAtMs } : {},
+            ...outcome.domain !== undefined && outcome.domain !== '' ? { domain: outcome.domain } : {},
+          })
+        }
       }
       await this.saveOwn(refreshed)
       return refreshed

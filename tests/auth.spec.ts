@@ -8,7 +8,8 @@ import {
   CodeBuddyCredentialStore,
   CODEBUDDY_AUTH_FILE_ENV,
   type CodeBuddyCredential,
-} from '../src/auth.ts'// node:os's ESM namespace rejects vi.spyOn (non-configurable), so homedir is
+} from '../src/auth.ts'
+import { AccountStore } from '../src/account-store.ts'// node:os's ESM namespace rejects vi.spyOn (non-configurable), so homedir is
 // mocked at the module level; unset state falls through to the real one.
 const fakeOs = vi.hoisted(() => ({
   home: undefined as string | undefined,
@@ -205,6 +206,97 @@ describe('CodeBuddyCredentialStore', () => {
     store.setCliPath(second)
     expect(store.cliAuthPath()).toBe(second)
     await expect(store.resolve()).resolves.toMatchObject({ accessToken: 'at-b', nickname: 'B' })
+  })
+
+  it('prefers the active account over the CLI file when an account store is attached', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cb-store-'))
+    CLEANUP.push(() => rm(dir, { recursive: true, force: true }))
+    const cli = join(dir, 'Tencent-Cloud.coding-copilot.info')
+    // The CLI file holds account "at".
+    await writeFile(cli, nestedDoc(Date.now() + 3600_000))
+    const accountStore = new AccountStore(join(dir, 'accounts.json'))
+    await accountStore.add({
+      id: 'acc-1', uid: 'uid-active', nickname: '活跃号', domain: 'www.codebuddy.cn',
+      accessToken: 'at-active', refreshToken: 'rt-active', expiresAtMs: Date.now() + 3600_000,
+    })
+    const store = new CodeBuddyCredentialStore({
+      cliPath: cli,
+      ownPath: join(dir, 'own.json'),
+      refresh: async credential => ({ accessToken: credential.accessToken }),
+      accountStore,
+    })
+    await expect(store.resolve()).resolves.toMatchObject({ accessToken: 'at-active', nickname: '活跃号', source: 'dsh' })
+  })
+
+  it('falls back to the CLI file when the account store has no active account', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cb-store-'))
+    CLEANUP.push(() => rm(dir, { recursive: true, force: true }))
+    const cli = join(dir, 'Tencent-Cloud.coding-copilot.info')
+    await writeFile(cli, nestedDoc(Date.now() + 3600_000))
+    const accountStore = new AccountStore(join(dir, 'accounts.json'))
+    const store = new CodeBuddyCredentialStore({
+      cliPath: cli,
+      ownPath: join(dir, 'own.json'),
+      refresh: async credential => ({ accessToken: credential.accessToken }),
+      accountStore,
+    })
+    await expect(store.resolve()).resolves.toMatchObject({ accessToken: 'at', source: 'cli' })
+  })
+
+  it('writes a refresh back into the active account store entry', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cb-store-'))
+    CLEANUP.push(() => rm(dir, { recursive: true, force: true }))
+    const accountStore = new AccountStore(join(dir, 'accounts.json'))
+    await accountStore.add({
+      id: 'acc-1', uid: 'uid-1', nickname: '一号', domain: 'www.codebuddy.cn',
+      // Expired: triggers a refresh on resolve.
+      accessToken: 'at-old', refreshToken: 'rt-old', expiresAtMs: Date.now() - 1000,
+    })
+    const store = new CodeBuddyCredentialStore({
+      cliPath: join(dir, 'missing.info'),
+      ownPath: join(dir, 'own.json'),
+      refresh: async () => ({ accessToken: 'at-fresh', refreshToken: 'rt-fresh', expiresInSec: 7200 }),
+      accountStore,
+    })
+    await expect(store.resolve()).resolves.toMatchObject({ accessToken: 'at-fresh', source: 'dsh' })
+    // The token was written back into the account store.
+    const cred = await accountStore.activeCredential()
+    expect(cred?.accessToken).toBe('at-fresh')
+    expect(cred?.refreshToken).toBe('rt-fresh')
+    // A second resolve reads a non-expiring stored token and does not refresh again.
+    let refreshes = 0
+    const store2 = new CodeBuddyCredentialStore({
+      cliPath: join(dir, 'missing.info'),
+      ownPath: join(dir, 'own.json'),
+      refresh: async () => {
+        refreshes += 1
+        return { accessToken: 'at-fresh-2' }
+      },
+      accountStore,
+    })
+    await expect(store2.resolve()).resolves.toMatchObject({ accessToken: 'at-fresh' })
+    expect(refreshes).toBe(0)
+  })
+
+  it('status reflects the active account source and nickname', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cb-store-'))
+    CLEANUP.push(() => rm(dir, { recursive: true, force: true }))
+    const accountStore = new AccountStore(join(dir, 'accounts.json'))
+    await accountStore.add({
+      id: 'acc-1', uid: 'uid-1', nickname: '云端账号', domain: 'www.codebuddy.cn',
+      accessToken: 'at', refreshToken: 'rt', expiresAtMs: Date.now() + 3600_000,
+    })
+    const store = new CodeBuddyCredentialStore({
+      cliPath: join(dir, 'missing.info'),
+      ownPath: join(dir, 'own.json'),
+      refresh: async credential => ({ accessToken: credential.accessToken }),
+      accountStore,
+    })
+    await expect(store.status()).resolves.toMatchObject({
+      state: 'signed-in',
+      nickname: '云端账号',
+      source: 'dsh',
+    })
   })
 })
 

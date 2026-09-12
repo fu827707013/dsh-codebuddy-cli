@@ -175,16 +175,84 @@ interface CodeBuddyModelBilling {
   /** Whether the model is currently free (`x0.00` credits). */
   free: boolean;
 }
-/** One billing package and its remaining credit. */
+/** One billing package and its remaining credit (a full resource package). */
 interface CodeBuddyCreditAccount {
+  /** Package code as the upstream reports it (may be absent). */
+  packageCode?: string;
   packageName: string;
+  /** Total capacity of this package. */
+  total: number;
+  /** Remaining capacity of this package. */
   remain: number;
+  /** Used capacity of this package. */
+  used: number;
+  /** Backward-compatible alias for the total (the older card's `size`). */
   size: number;
+  /** Expiry as epoch milliseconds; absent means no known expiry (long-lived). */
+  expireAtMs?: number;
+  /** Whether the package has already expired. */
+  expired: boolean;
+  /** Whether the package expires within the soon window (7 days). */
+  expiringSoon: boolean;
 }
 /** Aggregated credit answer for one credential. */
 interface CodeBuddyCredits {
   total: number;
   accounts: readonly CodeBuddyCreditAccount[];
+}
+/** One official usage row (a single billing request). */
+interface CodeBuddyUsageRow {
+  requestId: string;
+  model: string;
+  client: string;
+  credit: number;
+  /** Local display of the request time (upstream format preserved). */
+  requestTime: string;
+  /** Epoch milliseconds of the request, for sorting. */
+  ts: number;
+  /** Local date key `YYYY-MM-DD`. */
+  date: string;
+}
+/** Daily usage aggregation, optionally broken down by model. */
+interface CodeBuddyUsageDaily {
+  /** Local date key `YYYY-MM-DD`. */
+  date: string;
+  /** Total credits consumed that day. */
+  usage: number;
+  /** Per-model breakdown for that day, when the upstream row carries a model. */
+  models?: {
+    model: string;
+    requestCount: number;
+    credit: number;
+  }[];
+}
+/** Aggregate usage stats for one credential over a 31-day window. */
+interface CodeBuddyUsageStats {
+  /** `complete` when the window was fetched in full; `partial` / `unavailable` degrade. */
+  status: 'complete' | 'partial' | 'unavailable';
+  /** Inclusive window start date `YYYY-MM-DD`. */
+  rangeStart: string;
+  /** Inclusive window end date `YYYY-MM-DD`. */
+  rangeEnd: string;
+  /** When the window was collected (epoch ms). */
+  collectedAt: number;
+  summary: {
+    usageToday: number;
+    usage7Days: number;
+    usageThisMonth: number;
+  };
+  /** One entry per day in the window (zero-filled). */
+  daily: readonly CodeBuddyUsageDaily[];
+  /** Per-model aggregation across the whole window. */
+  models: readonly {
+    model: string;
+    requestCount: number;
+    credit: number;
+  }[];
+  /** Most recent requests, newest first. */
+  requests: readonly CodeBuddyUsageRow[];
+  /** Max per-account detail rows kept in `requests`. */
+  detailLimit: number;
 }
 /** Token refresh answer; fields the upstream omits stay absent. */
 interface CodeBuddyRefreshOutcome {
@@ -258,12 +326,116 @@ declare class CodeBuddyUpstreamClient {
   /** POST the billing endpoint for the aggregated remaining credit. */
   fetchCredits(credential: CodeBuddyCredential): Promise<CodeBuddyCredits>;
   /**
+   * Fetch official per-request usage over a window and aggregate it.
+   *
+   * The upstream billing endpoint (`get-user-request-usage`) returns paginated
+   * rows of individual billing requests (credit consumed, model, client,
+   * request time). The rows are aggregated in-process into today / 7-day /
+   * month totals, a zero-filled daily series, and a per-model breakdown,
+   * which back the plugin's credit-statistics panel.
+   *
+   * Pagination follows the upstream page contract; a capped page count guards
+   * against runaway loops. Window days default to 31 (the upstream's range).
+   */
+  fetchUsage(credential: CodeBuddyCredential, windowDays?: number): Promise<CodeBuddyUsageStats>;
+  /**
    * POST the CN daily check-in endpoint. The answer is classified for the
    * card rather than thrown: a transport or envelope failure, and an upstream
    * "already checked in" business code, all come back as plain outcomes so
    * the browser half never has to interpret upstream error text.
    */
   checkIn(credential: CodeBuddyCredential): Promise<CodeBuddyCheckInOutcome>;
+}
+//#endregion
+//#region src/account-store.d.ts
+/** Current on-disk format version; readers reject others. */
+declare const ACCOUNTS_FORMAT_VERSION = 1;
+/** On-disk shape of the accounts document. */
+interface AccountsDocument {
+  version: typeof ACCOUNTS_FORMAT_VERSION;
+  /** Stable id of the currently active account, or undefined when none is active. */
+  activeId?: string;
+  /** All stored accounts, keyed by stable id. */
+  accounts: Record<string, StoredAccount>;
+}
+/** One stored account as it appears on disk. */
+interface StoredAccount {
+  /** Stable client-side id for this account (uuid or similar). */
+  id: string;
+  /** Upstream user id. */
+  uid: string;
+  /** Display name from the upstream profile. */
+  nickname?: string;
+  /** Login domain (cn / global). */
+  domain: string;
+  /** Enterprise id, if the account belongs to an enterprise. */
+  enterpriseId?: string;
+  accessToken: string;
+  refreshToken: string;
+  /** Access token expiry, epoch milliseconds. */
+  expiresAtMs: number;
+  /** Refresh token expiry, epoch milliseconds. */
+  refreshExpiresAtMs?: number;
+  /** When this account was first stored. */
+  addedAtMs: number;
+  /** Last daily check-in outcome, so the card can render today's state. */
+  lastCheckIn?: {
+    /** Local date (YYYY-MM-DD) the check-in result was recorded. */
+    date: string;
+    result: 'ok' | 'already' | 'failed';
+  };
+}
+/** Read-only summary of one account for status display. */
+interface AccountSummary {
+  id: string;
+  uid: string;
+  nickname?: string;
+  domain: string;
+  enterpriseId?: string;
+  expiresAtMs: number;
+  active: boolean;
+  lastCheckIn?: StoredAccount['lastCheckIn'];
+}
+/**
+ * Multi-account credential store.
+ *
+ * The store reads and writes a JSON document under `$DSH_HOME`. Writes are
+ * atomic and lock-protected. Reads are immutable snapshots — callers that
+ * need a credential must copy it out.
+ */
+declare class AccountStore {
+  private readonly path;
+  constructor(path?: string);
+  /** Read the full document; returns an empty document when the file is absent. */
+  read(): Promise<AccountsDocument>;
+  /** Read and re-write the document inside a lock, applying a transform. */
+  private mutate;
+  /** Add a new account (or overwrite if the id already exists). Returns the stored account. */
+  add(account: Omit<StoredAccount, 'addedAtMs'>): Promise<StoredAccount>;
+  /** Remove an account by id. Returns true if the account existed. */
+  remove(id: string): Promise<boolean>;
+  /** Set the active account by id. Returns false when the account does not exist. */
+  setActive(id: string): Promise<boolean>;
+  /** Clear the active account (so the CLI file fallback takes over). */
+  clearActive(): Promise<void>;
+  /** Get the active account's stored credential, or undefined when none is active. */
+  activeCredential(): Promise<CodeBuddyCredential | undefined>;
+  /** Get a specific account's stored credential. */
+  credentialFor(id: string): Promise<CodeBuddyCredential | undefined>;
+  /** Update a stored account's tokens (after a refresh). */
+  updateTokens(id: string, tokens: {
+    accessToken: string;
+    refreshToken?: string;
+    expiresAtMs: number;
+    refreshExpiresAtMs?: number;
+    domain?: string;
+  }): Promise<void>;
+  /** Record a daily check-in outcome for an account. No-op when the id is unknown. */
+  recordCheckIn(id: string, date: string, result: 'ok' | 'already' | 'failed'): Promise<void>;
+  /** Summaries of all stored accounts, with the active one flagged. */
+  summaries(): Promise<readonly AccountSummary[]>;
+  /** Convert a stored account to a CodeBuddyCredential. */
+  private toCredential;
 }
 //#endregion
 //#region src/auth.d.ts
@@ -299,6 +471,8 @@ interface CodeBuddyStoreOptions {
   refresh: (credential: CodeBuddyCredential) => Promise<CodeBuddyRefreshOutcome>;
   /** Refresh this long before actual expiry; default five minutes. */
   refreshMarginMs?: number;
+  /** Multi-account store; when present, its active account wins over the CLI file. */
+  accountStore?: AccountStore;
 }
 /** Basename of the plugin-owned credential copy inside the Harness home. */
 declare const CODEBUDDY_AUTH_FILENAME = ".codebuddy-cli-auth.json";
@@ -338,6 +512,7 @@ declare class CodeBuddyCredentialStore {
   private readonly ownPath;
   private cliPathOverride;
   private inflight;
+  private readonly accountStore;
   constructor(options: CodeBuddyStoreOptions);
   /**
    * Configuration precedence for the CLI file: the plugin's configured path,
@@ -604,4 +779,4 @@ declare const Config: z<Config>;
  */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { CODEBUDDY_AUTH_FILENAME, CODEBUDDY_AUTH_FILE_ENV, CODEBUDDY_HOST_HEARTBEAT_FILENAME, CODEBUDDY_IDE_NAME, CODEBUDDY_IDE_TYPE, CODEBUDDY_PROVIDER, CODEBUDDY_SETTINGS_NS, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, CODEBUDDY_UNKNOWN_VERSION, type CodeBuddyAdapter, type CodeBuddyAuthStatus, CodeBuddyCatalog, type CodeBuddyChatResult, type CodeBuddyClientIdentity, type CodeBuddyCredential, CodeBuddyCredentialStore, type CodeBuddyCredits, type CodeBuddyEffort, type CodeBuddyHostHeartbeat, type CodeBuddyModelBilling, type CodeBuddyModelInfo, type CodeBuddyModelReasoning, type CodeBuddyRefreshOutcome, type CodeBuddyShim, CodeBuddyUpstreamClient, type CodeBuddyUpstreamModel, Config, FALLBACK_CODEBUDDY_MODELS, type UpstreamErrorKind, apply, classifyUpstreamError, clearHostHeartbeat, clientIdentityHeaders, codebuddyHostHeartbeatPath, codebuddyOwnAuthPath, createCodeBuddyAdapter, createCodeBuddyShim, defaultAuthDir, defaultAuthDirCandidates, filterEnabledModels, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseCodeBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf, resolveClientIdentity, resolveCodeBuddyCliVersion, userAgentFor };
+export { CODEBUDDY_AUTH_FILENAME, CODEBUDDY_AUTH_FILE_ENV, CODEBUDDY_HOST_HEARTBEAT_FILENAME, CODEBUDDY_IDE_NAME, CODEBUDDY_IDE_TYPE, CODEBUDDY_PROVIDER, CODEBUDDY_SETTINGS_NS, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, CODEBUDDY_UNKNOWN_VERSION, type CodeBuddyAdapter, type CodeBuddyAuthStatus, CodeBuddyCatalog, type CodeBuddyChatResult, type CodeBuddyClientIdentity, type CodeBuddyCredential, CodeBuddyCredentialStore, type CodeBuddyCreditAccount, type CodeBuddyCredits, type CodeBuddyEffort, type CodeBuddyHostHeartbeat, type CodeBuddyModelBilling, type CodeBuddyModelInfo, type CodeBuddyModelReasoning, type CodeBuddyRefreshOutcome, type CodeBuddyShim, CodeBuddyUpstreamClient, type CodeBuddyUpstreamModel, type CodeBuddyUsageDaily, type CodeBuddyUsageRow, type CodeBuddyUsageStats, Config, FALLBACK_CODEBUDDY_MODELS, type UpstreamErrorKind, apply, classifyUpstreamError, clearHostHeartbeat, clientIdentityHeaders, codebuddyHostHeartbeatPath, codebuddyOwnAuthPath, createCodeBuddyAdapter, createCodeBuddyShim, defaultAuthDir, defaultAuthDirCandidates, filterEnabledModels, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseCodeBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf, resolveClientIdentity, resolveCodeBuddyCliVersion, userAgentFor };

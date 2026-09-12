@@ -16,6 +16,9 @@ import { createCodeBuddyShim } from './shim.ts'
 import { CodeBuddyUpstreamClient } from './upstream.ts'
 import { registerCodeBuddyStatusRoute } from './web-status.ts'
 import { clearHostHeartbeat, writeHostHeartbeat } from './host-heartbeat.ts'
+import { AccountStore } from './account-store.ts'
+import { startOAuthLogin, pollOAuthLogin } from './oauth.ts'
+import { ensureClientIdentity } from './upstream.ts'
 
 export { CODEBUDDY_PROVIDER, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, createCodeBuddyAdapter, type CodeBuddyAdapter } from './adapter.ts'
 export { createCodeBuddyShim, type CodeBuddyShim } from './shim.ts'
@@ -50,6 +53,10 @@ export {
   type CodeBuddyModelReasoning,
   type CodeBuddyRefreshOutcome,
   type CodeBuddyUpstreamModel,
+  type CodeBuddyCreditAccount,
+  type CodeBuddyUsageRow,
+  type CodeBuddyUsageDaily,
+  type CodeBuddyUsageStats,
 } from './upstream.ts'
 export {
   clientIdentityHeaders,
@@ -120,9 +127,11 @@ export const Config: z<Config> = z.object({
  */
 export function apply(ctx: Context, config: Config): void {
   const client = new CodeBuddyUpstreamClient()
+  const accountStore = new AccountStore()
   const store = new CodeBuddyCredentialStore({
     ...config.authFile === undefined ? {} : { cliPath: config.authFile },
     refresh: credential => client.refreshToken(credential),
+    accountStore,
   })
   const catalog = new CodeBuddyCatalog()
   const shim = createCodeBuddyShim({ store, client, catalog, logger: ctx.logger })
@@ -159,6 +168,12 @@ export function apply(ctx: Context, config: Config): void {
     setEnabledModels,
     settingsWritable: () => ctx.get('settings') !== undefined,
     checkIn: credential => client.checkIn(credential),
+    refreshToken: credential => client.refreshToken(credential),
+    fetchUsage: credential => client.fetchUsage(credential),
+    accountStore,
+    loginStart: identity => startOAuthLogin(identity),
+    loginPoll: (state, identity) => pollOAuthLogin(state, identity),
+    resolveIdentity: () => ensureClientIdentity(),
   }))
 
   // The settings section is what makes the provider visible on the Models
