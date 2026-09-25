@@ -173,6 +173,8 @@ export interface CodeBuddyRefreshOutcome {
   accessToken: string
   refreshToken?: string
   expiresInSec?: number
+  /** Refresh-token lifetime in seconds, when the upstream reports one. */
+  refreshExpiresInSec?: number
   domain?: string
 }
 
@@ -705,6 +707,9 @@ export class CodeBuddyUpstreamClient {
     const outcome: CodeBuddyRefreshOutcome = { accessToken }
     if (typeof data['refreshToken'] === 'string' && data['refreshToken'] !== '') outcome.refreshToken = data['refreshToken']
     if (typeof data['expiresIn'] === 'number' && data['expiresIn'] > 0) outcome.expiresInSec = data['expiresIn']
+    if (typeof data['refreshExpiresIn'] === 'number' && data['refreshExpiresIn'] > 0) {
+      outcome.refreshExpiresInSec = data['refreshExpiresIn']
+    }
     if (typeof data['domain'] === 'string' && data['domain'] !== '') outcome.domain = data['domain']
     return outcome
   }

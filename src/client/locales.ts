@@ -2,6 +2,9 @@
 
 export const en = {
   title: 'DSH CodeBuddy CLI Connect',
+  // The settings tab strip shares a row with the host's own tabs, so the tab
+  // gets a short label while the card keeps the full product name.
+  tabLabel: 'CodeBuddy CLI',
   intro: 'Use the models included in the CodeBuddy CLI directly in DSH — zero configuration, ready out of the box.',
   expand: 'Expand',
   collapse: 'Collapse',
@@ -64,6 +67,22 @@ export const en = {
   tabRemaining: 'Remaining credit',
   // —— Account cards (workbuddy-switch style) ——
   accountCardAdd: 'OAuth sign in to add account',
+  // —— Paste-token import ——
+  accountImportOpen: 'Add by pasting tokens',
+  accountImportHint: 'Paste the refresh_token from CodeBuddy. The refresh token is the long-lived credential, so it is the one that matters — an access token alone expires and cannot be renewed.',
+  accountImportRefreshLabel: 'refresh_token (required)',
+  accountImportAccessLabel: 'access_token (optional)',
+  accountImportAccessPlaceholder: 'Optional — the Host refreshes it anyway',
+  accountImportDomainLabel: 'Login region',
+  accountImportDomainCn: 'China (codebuddy.cn)',
+  accountImportDomainGlobal: 'Global (workbuddy.ai)',
+  accountImportSubmit: 'Verify and add',
+  accountImportSubmitting: 'Verifying…',
+  accountImportCancel: 'Cancel',
+  accountImportWorking: 'Checking the token against the upstream service…',
+  accountImportFailed: 'Could not add the account: {message}',
+  accountImportNeedRefresh: 'Paste a refresh_token first.',
+  accountImportStoredNote: 'Nothing is saved unless the check succeeds.',
   accountCardNoAccounts: 'No accounts yet. Sign in with the QR code above to add your first CodeBuddy account.',
   accountCardSetActive: 'Set as current',
   accountCardActive: 'Current',
@@ -175,6 +194,8 @@ export type CodeBuddySettingsKey = keyof typeof en
 
 export const zh: Record<CodeBuddySettingsKey, string> = {
   title: 'DSH CodeBuddy CLI Connect',
+  // 设置页的标签栏与宿主自带的标签同排，故标签取短名，卡片标题保留完整产品名。
+  tabLabel: 'CodeBuddy CLI',
   intro: '在 DSH 中直接使用 CodeBuddy CLI 包含的模型，开箱即用，无需额外配置。',
   expand: '展开',
   collapse: '收起',
@@ -237,6 +258,22 @@ export const zh: Record<CodeBuddySettingsKey, string> = {
   tabRemaining: '剩余积分',
   // —— 账号卡片（workbuddy-switch 同款） ——
   accountCardAdd: '扫码登录添加账号',
+  // —— 粘贴 Token 导入 ——
+  accountImportOpen: '粘贴 Token 添加',
+  accountImportHint: '粘贴 CodeBuddy 的 refresh_token。refresh_token 是长期凭证，是关键的那个——单独一个 access_token 会过期且无法续期。',
+  accountImportRefreshLabel: 'refresh_token（必填）',
+  accountImportAccessLabel: 'access_token（可选）',
+  accountImportAccessPlaceholder: '可选——插件会自行刷新',
+  accountImportDomainLabel: '登录区域',
+  accountImportDomainCn: '国内（codebuddy.cn）',
+  accountImportDomainGlobal: '国际（workbuddy.ai）',
+  accountImportSubmit: '验证并添加',
+  accountImportSubmitting: '验证中…',
+  accountImportCancel: '取消',
+  accountImportWorking: '正在向上游服务验证该 Token…',
+  accountImportFailed: '添加失败：{message}',
+  accountImportNeedRefresh: '请先粘贴 refresh_token。',
+  accountImportStoredNote: '验证不通过则不会保存任何内容。',
   accountCardNoAccounts: '暂无账号。点击上方扫码登录，添加你的第一个 CodeBuddy 账号。',
   accountCardSetActive: '设为当前',
   accountCardActive: '当前',

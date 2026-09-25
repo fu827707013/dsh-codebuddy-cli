@@ -65,12 +65,39 @@ export function apply(ctx: ClientContext): void {
     const namespace = 'settings.codebuddy-cli'
     ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-codebuddy-cli: settings copy')
     const t = ctx.locale.bind(namespace) as CodeBuddyPluginCardInjected['t']
-    ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
-      name: 'settings.plugin.item',
-      key: 'codebuddy-cli',
-      priority: 30,
+    // The Plugin configuration page renders `settings.plugins.tab`; DSH 0.1.7
+    // renamed the surface from `settings.plugin.item`, and nothing consumes that
+    // older name any more — a card registered only there is never rendered. One
+    // bundle therefore registers under both: a host that does not know a name
+    // simply never renders it, so old and new hosts each pick up exactly one.
+    ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
+      name: 'settings.plugins.tab',
+      id: 'codebuddy-cli',
+      order: 30,
+      // The slot contract documents `label` as the registrant-localized tab
+      // text; without it the tab strip renders an unlabelled blank tab. The tab
+      // shares its row with the host's own tabs, so it uses the short product
+      // name rather than the full card title.
+      label: () => t('tabLabel'),
+      locale: namespace,
       inject: (): CodeBuddyPluginCardInjected => ({ t }),
     }, CodeBuddyPluginCard))
+
+    // Legacy alias for pre-0.1.7 hosts. The installed slot types describe the
+    // current generation only, so the older name needs the cast below; the call
+    // is a no-op on any host that no longer declares the slot.
+    const legacySlot = 'settings.plugin.item'
+    const legacyInject = ctx.slots.inject.bind(ctx.slots) as unknown as (
+      name: string,
+      register: () => () => void,
+    ) => () => void
+    legacyInject(legacySlot, () => ctx.slots.register({
+      name: legacySlot,
+      id: 'codebuddy-cli',
+      order: 30,
+      locale: namespace,
+      inject: (): CodeBuddyPluginCardInjected => ({ t }),
+    } as never, CodeBuddyPluginCard))
     // The composer credit line rides the same locale namespace (its keys are a
     // subset) and the session-scoped `conversation.composer.dock` list slot —
     // the slot the host's own stats strip occupies, so the credit figure sits

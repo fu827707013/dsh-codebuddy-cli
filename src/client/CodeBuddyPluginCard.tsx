@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+// DSH 0.1.7 renamed the icon exports: the old `…Outline14` size suffix is gone
+// and icons now come in `…OutlineRegular` (1px stroke) / `…OutlineMedium`
+// (1.3px stroke) variants. Importing the retired name yields `undefined`, which
+// React rejects as an invalid element type (error #130) and the whole card
+// renders as an empty tab. `Regular` is the current 14px-weight default and is
+// what the host's own plugins use.
+import { IconChevronDownOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
@@ -24,9 +30,17 @@ export interface CodeBuddyPluginCardInjected {
   t: (key: CodeBuddySettingsKey, params?: Record<string, unknown>) => string
 }
 
-/** Props delivered by the Plugin configuration item slot. */
+/**
+ * Props delivered by the plugin-configuration tab.
+ *
+ * The slot is a keyed list whose owner contributes nothing, and DSH renamed it
+ * from `settings.plugin.item` to `settings.plugins.tab` in 0.1.7 while declaring
+ * no shared props for either name. Typing against the root slot therefore keeps
+ * one bundle building against both generations; the injected locale copy stays
+ * optional so a host that omits it still renders its own defaults.
+ */
 export type CodeBuddyPluginCardProps =
-  PropsRuntime<'settings.plugin.item'>
+  PropsRuntime<'root'>
   & Partial<CodeBuddyPluginCardInjected>
 
 const POLL_INTERVAL_MS = 60_000
@@ -356,7 +370,7 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
           <span className={css.name}>{title}</span>
           <span className={css.description}>{t('intro')}</span>
         </span>
-        <IconChevronDownOutline14 className={open ? cx(css.chevron, css.chevronOpen) : cx(css.chevron)} />
+        <IconChevronDownOutlineRegular className={open ? cx(css.chevron, css.chevronOpen) : cx(css.chevron)} />
       </button>
       {open
         ? <div className={css.body}>

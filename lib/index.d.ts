@@ -1,8 +1,8 @@
 import z from "@deepseek-ai/schemastery";
 import "@earendil-works/pi-ai";
 import { PiAiAdapter } from "@deepseek-ai/dsh-llm-pi-ai";
-import { Context } from "@deepseek-ai/cordis";
 import { SettingsNamespace } from "@deepseek-ai/dsh-settings";
+import { Context } from "@deepseek-ai/cordis";
 import { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 //#region src/client-identity.d.ts
 /**
@@ -259,6 +259,8 @@ interface CodeBuddyRefreshOutcome {
   accessToken: string;
   refreshToken?: string;
   expiresInSec?: number;
+  /** Refresh-token lifetime in seconds, when the upstream reports one. */
+  refreshExpiresInSec?: number;
   domain?: string;
 }
 /** Chat answer: either a live SSE response or a classified failure. */
@@ -753,6 +755,10 @@ declare const inject: string[];
  * public constant carries the seam's type without pulling the brand helper
  * into this package (upstream DSH plugins, `dsh-llm-pi-ai` included, pass
  * their namespaces as plain string literals).
+ *
+ * On DSH 0.1.7+ the settings provider addresses sections by Loader entry id
+ * instead, so reads and writes go through the namespace resolved by
+ * `settingsCompatNamespace()` below rather than this constant directly.
  */
 declare const CODEBUDDY_SETTINGS_NS: SettingsNamespace;
 /** Plugin configuration. */
@@ -770,6 +776,19 @@ interface Config {
    */
   enabledModels?: string[];
 }
+/**
+ * The plugin's configuration schema.
+ *
+ * Every field is marked `volatile` because DSH 0.1.7+ builds its settings
+ * forms from volatile fields only (`volatileForm` in `dsh-settings` skips an
+ * entry outright when nothing in its schema is volatile). Older providers have
+ * no concept of volatility, and the compat layer strips the marker before
+ * handing the schema to them, so this stays inert on every host generation.
+ *
+ * The public type stays the plain `Config` shape for plugin consumers; the
+ * loader resolves these top-level fields to volatile references, which
+ * `unwrapConfig` collapses back at every read.
+ */
 declare const Config: z<Config>;
 /**
  * Start the loopback endpoint, register the `codebuddy` provider, and
@@ -777,6 +796,6 @@ declare const Config: z<Config>;
  * The static fallback catalog serves from the first moment, so an offline
  * upstream never leaves the provider empty.
  */
-declare function apply(ctx: Context, config: Config): void;
+declare function apply(ctx: Context, rawConfig: Config): void;
 //#endregion
 export { CODEBUDDY_AUTH_FILENAME, CODEBUDDY_AUTH_FILE_ENV, CODEBUDDY_HOST_HEARTBEAT_FILENAME, CODEBUDDY_IDE_NAME, CODEBUDDY_IDE_TYPE, CODEBUDDY_PROVIDER, CODEBUDDY_SETTINGS_NS, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, CODEBUDDY_UNKNOWN_VERSION, type CodeBuddyAdapter, type CodeBuddyAuthStatus, CodeBuddyCatalog, type CodeBuddyChatResult, type CodeBuddyClientIdentity, type CodeBuddyCredential, CodeBuddyCredentialStore, type CodeBuddyCreditAccount, type CodeBuddyCredits, type CodeBuddyEffort, type CodeBuddyHostHeartbeat, type CodeBuddyModelBilling, type CodeBuddyModelInfo, type CodeBuddyModelReasoning, type CodeBuddyRefreshOutcome, type CodeBuddyShim, CodeBuddyUpstreamClient, type CodeBuddyUpstreamModel, type CodeBuddyUsageDaily, type CodeBuddyUsageRow, type CodeBuddyUsageStats, Config, FALLBACK_CODEBUDDY_MODELS, type UpstreamErrorKind, apply, classifyUpstreamError, clearHostHeartbeat, clientIdentityHeaders, codebuddyHostHeartbeatPath, codebuddyOwnAuthPath, createCodeBuddyAdapter, createCodeBuddyShim, defaultAuthDir, defaultAuthDirCandidates, filterEnabledModels, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseCodeBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf, resolveClientIdentity, resolveCodeBuddyCliVersion, userAgentFor };

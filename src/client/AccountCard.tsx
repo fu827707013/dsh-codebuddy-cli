@@ -20,12 +20,14 @@ import type { CSSProperties } from 'react'
 import {
   CODEBUDDY_CHECKIN_PATH,
   CODEBUDDY_DELETE_ACCOUNT_PATH,
+  CODEBUDDY_IMPORT_ACCOUNT_PATH,
   CODEBUDDY_LOGIN_POLL_PATH,
   CODEBUDDY_LOGIN_START_PATH,
   CODEBUDDY_SWITCH_ACCOUNT_PATH,
 } from '../status-paths.ts'
 import type {
   CodeBuddyCheckInOutcome,
+  CodeBuddyImportAccountResult,
   CodeBuddyLoginPollResult,
   CodeBuddyLoginStartResult,
   CodeBuddyWebAccount,
@@ -457,6 +459,13 @@ export function AccountCards({ accounts, onChanged, t }: {
   t: AccountCardInjected['t']
 }): React.ReactNode {
   const [loginState, setLoginState] = useState<{ phase: 'idle' } | { phase: 'starting' } | { phase: 'polling'; authUrl: string; state: string } | { phase: 'done'; error?: string }>({ phase: 'idle' })
+  const [importOpen, setImportOpen] = useState(false)
+  const [importState, setImportState] = useState<
+    { phase: 'idle' } | { phase: 'busy' } | { phase: 'done'; error?: string }
+  >({ phase: 'idle' })
+  const [importRefresh, setImportRefresh] = useState('')
+  const [importAccess, setImportAccess] = useState('')
+  const [importDomain, setImportDomain] = useState<'cn' | 'global'>('cn')
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -525,23 +534,191 @@ export function AccountCards({ accounts, onChanged, t }: {
     }
   }
 
+  /**
+   * Submit the pasted token pair.
+   *
+   * The form stays open on failure and keeps the user's input, so a mistyped
+   * token can be corrected without re-pasting everything; it closes only once
+   * the Host reports the account was stored.
+   */
+  const submitImport = async (): Promise<void> => {
+    const refreshToken = importRefresh.trim()
+    if (refreshToken === '') {
+      setImportState({ phase: 'done', error: t('accountImportNeedRefresh') })
+      return
+    }
+    setImportState({ phase: 'busy' })
+    try {
+      const response = await fetch(CODEBUDDY_IMPORT_ACCOUNT_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          refreshToken,
+          ...importAccess.trim() === '' ? {} : { accessToken: importAccess.trim() },
+          domain: importDomain === 'global' ? 'workbuddy.ai' : 'www.codebuddy.cn',
+        }),
+      })
+      const body = await response.json().catch(() => undefined) as CodeBuddyImportAccountResult | undefined
+      if (body === undefined) {
+        setImportState({ phase: 'done', error: `HTTP ${response.status}` })
+        return
+      }
+      if (!body.ok) {
+        setImportState({ phase: 'done', error: t('accountImportFailed', { message: body.error ?? `HTTP ${response.status}` }) })
+        return
+      }
+      if (!mounted.current) return
+      // Clear the tokens from component state as soon as they are stored.
+      setImportRefresh('')
+      setImportAccess('')
+      setImportState({ phase: 'idle' })
+      setImportOpen(false)
+      onChanged()
+    } catch (cause: unknown) {
+      setImportState({
+        phase: 'done',
+        error: t('accountImportFailed', {
+          message: cause instanceof Error ? cause.message : t('requestFailed'),
+        }),
+      })
+    }
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <p className={css.bodyText} style={{ margin: 0 }}>{t('accountPanelHint')}</p>
-        <button
-          type="button"
-          className={css.choiceSave}
-          disabled={loginState.phase === 'starting' || loginState.phase === 'polling'}
-          onClick={() => { void startLogin() }}
-        >
-          {loginState.phase === 'starting'
-            ? t('accountLoginStarting')
-            : loginState.phase === 'polling'
-              ? t('accountLoginPolling')
-              : t('accountCardAdd')}
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className={css.refresh}
+            onClick={() => {
+              setImportOpen(open => !open)
+              setImportState({ phase: 'idle' })
+            }}
+          >
+            {t('accountImportOpen')}
+          </button>
+          <button
+            type="button"
+            className={css.choiceSave}
+            disabled={loginState.phase === 'starting' || loginState.phase === 'polling'}
+            onClick={() => { void startLogin() }}
+          >
+            {loginState.phase === 'starting'
+              ? t('accountLoginStarting')
+              : loginState.phase === 'polling'
+                ? t('accountLoginPolling')
+                : t('accountCardAdd')}
+          </button>
+        </div>
       </div>
+      {importOpen ? (
+        <div
+          className={css.bodyBlock}
+          style={{ marginTop: 12, padding: 12, borderRadius: 12, border: '0.5px solid var(--dsw-alias-border-l3)' }}
+        >
+          <p className={css.bodyText} style={{ margin: 0 }}>{t('accountImportHint')}</p>
+          <label className={css.accountCardSectionLabel} style={{ display: 'block', marginTop: 10 }}>
+            {t('accountImportRefreshLabel')}
+          </label>
+          <textarea
+            value={importRefresh}
+            onChange={event => { setImportRefresh(event.target.value) }}
+            rows={3}
+            spellCheck={false}
+            autoComplete="off"
+            disabled={importState.phase === 'busy'}
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              marginTop: 4,
+              padding: '6px 8px',
+              borderRadius: 8,
+              border: '0.5px solid var(--dsw-alias-border-l3)',
+              background: 'var(--dsw-alias-bg-base)',
+              color: 'var(--dsw-alias-label-primary)',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              fontSize: 12,
+              resize: 'vertical',
+            }}
+          />
+          <label className={css.accountCardSectionLabel} style={{ display: 'block', marginTop: 10 }}>
+            {t('accountImportAccessLabel')}
+          </label>
+          <textarea
+            value={importAccess}
+            onChange={event => { setImportAccess(event.target.value) }}
+            rows={3}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={t('accountImportAccessPlaceholder')}
+            disabled={importState.phase === 'busy'}
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              marginTop: 4,
+              padding: '6px 8px',
+              borderRadius: 8,
+              border: '0.5px solid var(--dsw-alias-border-l3)',
+              background: 'var(--dsw-alias-bg-base)',
+              color: 'var(--dsw-alias-label-primary)',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              fontSize: 12,
+              resize: 'vertical',
+            }}
+          />
+          <label className={css.accountCardSectionLabel} style={{ display: 'block', marginTop: 10 }}>
+            {t('accountImportDomainLabel')}
+          </label>
+          <select
+            value={importDomain}
+            onChange={event => { setImportDomain(event.target.value === 'global' ? 'global' : 'cn') }}
+            disabled={importState.phase === 'busy'}
+            style={{
+              marginTop: 4,
+              padding: '6px 8px',
+              borderRadius: 8,
+              border: '0.5px solid var(--dsw-alias-border-l3)',
+              background: 'var(--dsw-alias-bg-base)',
+              color: 'var(--dsw-alias-label-primary)',
+              fontSize: 13,
+            }}
+          >
+            <option value="cn">{t('accountImportDomainCn')}</option>
+            <option value="global">{t('accountImportDomainGlobal')}</option>
+          </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className={css.choiceSave}
+              disabled={importState.phase === 'busy'}
+              onClick={() => { void submitImport() }}
+            >
+              {importState.phase === 'busy' ? t('accountImportSubmitting') : t('accountImportSubmit')}
+            </button>
+            <button
+              type="button"
+              className={css.refresh}
+              disabled={importState.phase === 'busy'}
+              onClick={() => {
+                setImportOpen(false)
+                setImportState({ phase: 'idle' })
+              }}
+            >
+              {t('accountImportCancel')}
+            </button>
+          </div>
+          {importState.phase === 'busy' ? (
+            <p className={css.bodyText} style={{ marginTop: 6 }}>{t('accountImportWorking')}</p>
+          ) : null}
+          {importState.phase === 'done' && importState.error !== undefined ? (
+            <p className={css.bodyError} style={{ marginTop: 6 }}>{importState.error}</p>
+          ) : null}
+          <p className={css.bodyText} style={{ marginTop: 6, opacity: 0.75 }}>{t('accountImportStoredNote')}</p>
+        </div>
+      ) : null}
       {loginState.phase === 'polling' ? (
         <p className={css.bodyText} style={{ marginTop: 6 }}>
           {t('accountLoginPolling')}{' '}

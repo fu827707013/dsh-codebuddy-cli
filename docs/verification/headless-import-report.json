@@ -1,0 +1,17 @@
+{
+  "pageTitle": "DeepSeek Harness",
+  "hasImportButton": true,
+  "showsMichael": true,
+  "showsLu": true,
+  "formVisible": true,
+  "textareaCount": 2,
+  "selectOptions": [
+    "国内（codebuddy.cn）",
+    "国际（workbuddy.ai）"
+  ],
+  "noteVisible": true,
+  "hasError": true,
+  "stillShowsBothAccounts": true,
+  "errorExcerpt": "添加失败：codebuddy upstream session_dead (http 401): 12153:refresh token failed:10000:token format error",
+  "consoleErrors": []
+}

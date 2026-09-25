@@ -218,6 +218,66 @@ export interface CodeBuddyLoginPollResult {
 /** Plugin-owned credit-statistics endpoint (aggregates usage across accounts). */
 export const CODEBUDDY_CREDIT_STATS_PATH = '/plugins/dsh-codebuddy-cli/credit-stats'
 
+/**
+ * Import-account endpoint: adds an identity from a pasted refresh/access token
+ * pair instead of the browser sign-in flow.
+ *
+ * `refreshToken` is the primary input — it is the long-lived credential and the
+ * Host exchanges it for a fresh access token before storing anything, so the
+ * stored record is always current. `accessToken` is accepted but optional: the
+ * upstream refresh endpoint authenticates on `X-Refresh-Token` alone, so a
+ * pasted access token only saves one round trip.
+ */
+export const CODEBUDDY_IMPORT_ACCOUNT_PATH = '/plugins/dsh-codebuddy-cli/accounts/import'
+
+/** Request body of the import-account route. */
+export interface CodeBuddyImportAccountRequest {
+  /**
+   * Long-lived credential; the Host refreshes it to obtain the access token it
+   * stores. Required — without it the account could never be renewed.
+   */
+  readonly refreshToken: string
+  /**
+   * Optional current access token. Accepted for convenience (a user copying
+   * both values pastes both), but never required and never trusted for
+   * identity: the refresh answer supersedes it.
+   */
+  readonly accessToken?: string
+  /**
+   * Login domain, e.g. `www.codebuddy.cn` or `workbuddy.ai`. Selects which
+   * upstream the account talks to. When omitted the Host derives it from the
+   * refresh answer, or falls back to the CN region.
+   */
+  readonly domain?: string
+  /**
+   * Identity hints for the rare case where neither the token pair nor the
+   * refresh answer supplies them. Both are display/attribution metadata.
+   */
+  readonly nickname?: string
+  readonly enterpriseId?: string
+}
+
+/**
+ * Import-account answer.
+ *
+ * A failed import is reported with `ok: false` and a message, and — unlike the
+ * login poll — nothing is written: an unverified token pair must never reach
+ * the account store.
+ */
+export interface CodeBuddyImportAccountResult {
+  readonly ok: boolean
+  /** The stored account when the import succeeded. */
+  readonly account?: CodeBuddyWebAccount
+  /**
+   * Credit ledger read during the import probe, so the new card renders its
+   * balance immediately instead of staying empty until the next status poll.
+   * Absent when the credits call failed — the import still succeeds.
+   */
+  readonly credits?: CodeBuddyWebCredits
+  /** Human-readable failure reason when `ok` is false. */
+  readonly error?: string
+}
+
 /** One per-request usage row, as the statistics panel renders it. */
 export interface CodeBuddyWebUsageRow {
   requestId: string

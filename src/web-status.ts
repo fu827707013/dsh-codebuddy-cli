@@ -14,6 +14,7 @@ import type { CodeBuddyUpstreamClient } from './upstream.ts'
 import type { AccountStore, AccountSummary } from './account-store.ts'
 import type { CodeBuddyClientIdentity } from './client-identity.ts'
 import { normalizeCredits } from './upstream.ts'
+import { regionOf } from './upstream.ts'
 import { filterEnabledModels } from './catalog.ts'
 import type { CodeBuddyModelInfo } from './catalog.ts'
 import { hostIsLoopback, originIsLoopback } from './loopback.ts'
@@ -27,6 +28,7 @@ import {
   CODEBUDDY_SWITCH_ACCOUNT_PATH,
   CODEBUDDY_DELETE_ACCOUNT_PATH,
   CODEBUDDY_CREDIT_STATS_PATH,
+  CODEBUDDY_IMPORT_ACCOUNT_PATH,
 } from './status-paths.ts'
 import type {
   CodeBuddyCheckInOutcome,
@@ -44,6 +46,7 @@ import type {
   CodeBuddyWebUsageAccount,
   CodeBuddyWebUsageDaily,
   CodeBuddyWebUsageRow,
+  CodeBuddyImportAccountResult,
 } from './status-paths.ts'
 
 export {
@@ -55,6 +58,7 @@ export {
   CODEBUDDY_SWITCH_ACCOUNT_PATH,
   CODEBUDDY_DELETE_ACCOUNT_PATH,
   CODEBUDDY_CREDIT_STATS_PATH,
+  CODEBUDDY_IMPORT_ACCOUNT_PATH,
 } from './status-paths.ts'
 export type {
   CodeBuddyWebStatus,
@@ -67,7 +71,12 @@ export type {
 /** Constructor dependencies. */
 export interface CodeBuddyStatusRouteOptions {
   store: CodeBuddyCredentialStore
-  client: Pick<CodeBuddyUpstreamClient, 'fetchCredits'>
+  /**
+   * Upstream calls the routes forward. `fetchModels` is optional so the
+   * existing credit-only wiring keeps working; the import route requires it
+   * and answers 501 without it, rather than storing an unprobed credential.
+   */
+  client: Pick<CodeBuddyUpstreamClient, 'fetchCredits'> & Partial<Pick<CodeBuddyUpstreamClient, 'fetchModels'>>
   /** Official-usage fetch for credit statistics (optional; absent disables the panel). */
   fetchUsage?: (credential: import('./auth.ts').CodeBuddyCredential) => Promise<import('./upstream.ts').CodeBuddyUsageStats>
   /** Resolve the current model catalog for free/badge display. */
@@ -636,6 +645,11 @@ export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatus
       path: CODEBUDDY_DELETE_ACCOUNT_PATH,
       handler: codeBuddyDeleteAccountHandler(deps),
     })
+    const disposeImport = ctx.webServer.register({
+      kind: 'exact',
+      path: CODEBUDDY_IMPORT_ACCOUNT_PATH,
+      handler: codeBuddyImportAccountHandler(deps),
+    })
     const disposeCreditStats = ctx.webServer.register({
       kind: 'exact',
       path: CODEBUDDY_CREDIT_STATS_PATH,
@@ -649,6 +663,7 @@ export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatus
       disposeLoginPoll()
       disposeSwitch()
       disposeDelete()
+      disposeImport()
       disposeCreditStats()
     }
   }, 'dsh-codebuddy-cli: Web status route')
@@ -759,6 +774,208 @@ export function codeBuddyLoginPollHandler(
       json(res, 200, { done: true, error: safeMessage(error) } satisfies CodeBuddyLoginPollResult)
     }
   }
+}
+
+/**
+ * Decode identity claims from a pasted access token JWT.
+ *
+ * Display-only metadata: the signature is not verified, because these values
+ * never authorize anything (the refresh answer and the token itself do). Any
+ * malformed token yields undefined rather than throwing, so a paste that is
+ * not a JWT at all still imports.
+ */
+function claimsFromToken(accessToken: string): Record<string, unknown> | undefined {
+  const parts = accessToken.split('.')
+  if (parts.length < 2) return undefined
+  const payload = parts[1]
+  if (payload === undefined || payload === '') return undefined
+  try {
+    const padded = payload.replace(/-/gu, '+').replace(/_/gu, '/')
+    const parsed: unknown = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+    return parsed as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
+/** Read a non-empty string claim. */
+function claimString(claims: Record<string, unknown> | undefined, key: string): string | undefined {
+  if (claims === undefined) return undefined
+  const value = claims[key]
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/**
+ * The import-account handler: add an identity from a pasted token pair.
+ *
+ * Order matters and is the point of this route. Identity is derived locally,
+ * then the refresh token is exchanged upstream, and only a successful exchange
+ * writes to the account store — an unverified pair must never appear in the
+ * account list. The exchange also *replaces* both tokens with the answer:
+ * upstream rotates the refresh token on every call and does not invalidate the
+ * previous one, so storing the pasted pair verbatim would leave a second,
+ * permanently valid credential alive on the server that nothing here tracks.
+ *
+ * @param deps - route dependencies; the import needs the account store plus
+ * both upstream calls.
+ * @returns the route handler.
+ */
+export function codeBuddyImportAccountHandler(
+  deps: CodeBuddyStatusRouteOptions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      json(res, 405, { error: 'method not allowed' })
+      return
+    }
+    if (!checkLoopbackPost(req, res)) return
+    if (deps.accountStore === undefined || deps.refreshToken === undefined) {
+      json(res, 501, { error: 'accounts-unavailable' })
+      return
+    }
+    // Without the catalog probe the route cannot prove the credential serves
+    // chat, so it refuses instead of storing a token it never exercised.
+    const fetchModels = deps.client.fetchModels
+    if (fetchModels === undefined) {
+      json(res, 501, { error: 'import-unavailable' })
+      return
+    }
+    try {
+      const raw = await readBody(req)
+      let parsed: { refreshToken?: unknown, accessToken?: unknown, domain?: unknown, nickname?: unknown, enterpriseId?: unknown }
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        json(res, 400, { error: 'expected {"refreshToken": string}' })
+        return
+      }
+      const refreshToken = typeof parsed.refreshToken === 'string' ? parsed.refreshToken.trim() : ''
+      if (refreshToken === '') {
+        json(res, 400, { error: 'expected {"refreshToken": string}' })
+        return
+      }
+      const pastedAccess = typeof parsed.accessToken === 'string' ? parsed.accessToken.trim() : ''
+      const pastedDomain = typeof parsed.domain === 'string' ? parsed.domain.trim() : ''
+      const nicknameHint = typeof parsed.nickname === 'string' && parsed.nickname !== '' ? parsed.nickname : undefined
+      const enterpriseHint = typeof parsed.enterpriseId === 'string' && parsed.enterpriseId !== ''
+        ? parsed.enterpriseId
+        : undefined
+
+      // Identity hints come from the pasted access token when there is one.
+      const claims = pastedAccess === '' ? undefined : claimsFromToken(pastedAccess)
+      const uidFromToken = claimString(claims, 'sub')
+      const nicknameFromToken = claimString(claims, 'nickname') ?? claimString(claims, 'preferred_username')
+      const enterpriseFromToken = claimString(claims, 'enterprise_id')
+
+      // Probe with the refresh token: it is the credential that both proves the
+      // account is live and yields the tokens we store. The domain decides
+      // which regional upstream is called, so an explicit choice wins, then the
+      // pasted token's region, then the CN default.
+      const probeDomain = pastedDomain !== ''
+        ? pastedDomain
+        : (regionOf(domainFromClaims(claims) ?? '') === 'global' ? (domainFromClaims(claims) ?? '') : '')
+      const probe = {
+        accessToken: pastedAccess,
+        refreshToken,
+        expiresAtMs: 0,
+        domain: probeDomain,
+        uid: uidFromToken ?? '',
+        source: 'dsh' as const,
+        ...enterpriseFromToken !== undefined ? { enterpriseId: enterpriseFromToken } : {},
+      }
+      const outcome = await deps.refreshToken(probe)
+
+      // With an access token in hand, confirm the account can actually be
+      // served: a refresh can succeed for a session the chat endpoint rejects.
+      const accessToken = outcome.accessToken
+      const resolvedDomain = outcome.domain ?? probeDomain
+      const now = Date.now()
+      const credential = {
+        accessToken,
+        refreshToken: outcome.refreshToken ?? refreshToken,
+        expiresAtMs: outcome.expiresInSec !== undefined ? now + outcome.expiresInSec * 1000 : now + 3600_000,
+        domain: resolvedDomain,
+        uid: uidFromToken ?? '',
+        source: 'dsh' as const,
+        ...outcome.refreshExpiresInSec !== undefined
+          ? { refreshExpiresAtMs: now + outcome.refreshExpiresInSec * 1000 }
+          : {},
+        ...enterpriseFromToken !== undefined ? { enterpriseId: enterpriseFromToken } : {},
+      }
+      await fetchModels(credential)
+
+      // Pull the credit ledger while we already hold a fresh credential: the
+      // account card is useless without it, and waiting for the host's next
+      // poll leaves a visible empty window right after a successful import.
+      // A credits failure must not fail the import — the account is already
+      // proven live, and the panel fills on the next status refresh.
+      let credits: CodeBuddyWebCredits | undefined
+      try {
+        credits = await deps.client.fetchCredits(credential)
+      } catch {
+        credits = undefined
+      }
+
+      // Identity the refresh answer cannot supply is read from the freshly
+      // minted access token, which is the authoritative source.
+      const freshClaims = claimsFromToken(accessToken)
+      const uid = uidFromToken ?? claimString(freshClaims, 'sub') ?? ''
+      const enterpriseId = enterpriseHint ?? enterpriseFromToken ?? claimString(freshClaims, 'enterprise_id')
+      const nickname = nicknameHint ?? nicknameFromToken
+        ?? claimString(freshClaims, 'nickname')
+        ?? claimString(freshClaims, 'preferred_username')
+
+      const id = generateAccountId()
+      const stored = await deps.accountStore.add({
+        id,
+        uid,
+        ...nickname !== undefined ? { nickname } : {},
+        domain: resolvedDomain,
+        ...enterpriseId !== undefined ? { enterpriseId } : {},
+        accessToken,
+        refreshToken: credential.refreshToken,
+        expiresAtMs: credential.expiresAtMs,
+        ...credential.refreshExpiresAtMs !== undefined
+          ? { refreshExpiresAtMs: credential.refreshExpiresAtMs }
+          : {},
+      })
+      await deps.accountStore.setActive(id)
+      // Seed the per-account credit cache with what the probe just read, so the
+      // status refresh the client fires immediately afterwards reuses this
+      // answer instead of racing a second upstream call (and instead of
+      // rendering an empty panel if that second call happens to fail).
+      if (credits !== undefined) {
+        const at = Date.now()
+        accountCreditsCache.set(id, { at, payload: { credits, creditUpdatedAtMs: at } })
+      }
+      json(res, 200, {
+        ok: true,
+        account: toWebAccount({ ...stored, active: true }),
+        ...credits !== undefined ? { credits } : {},
+      } satisfies CodeBuddyImportAccountResult)
+    } catch (error: unknown) {
+      // Nothing was written: the store is only mutated after the probes pass.
+      json(res, 200, { ok: false, error: safeMessage(error) } satisfies CodeBuddyImportAccountResult)
+    }
+  }
+}
+
+/**
+ * Read the login domain embedded in token claims.
+ *
+ * Some tokens carry the issuing host directly (`domain`, `iss`); the mapping is
+ * only used to pick a region, so a best-effort read is enough and an absent
+ * value simply falls through to the caller's default.
+ */
+function domainFromClaims(claims: Record<string, unknown> | undefined): string | undefined {
+  const direct = claimString(claims, 'domain')
+  if (direct !== undefined) return direct
+  const issuer = claimString(claims, 'iss')
+  if (issuer === undefined) return undefined
+  if (issuer.includes('workbuddy.ai')) return 'workbuddy.ai'
+  if (issuer.includes('codebuddy.cn')) return 'www.codebuddy.cn'
+  return undefined
 }
 
 /**
