@@ -13,6 +13,15 @@ import type { CodeBuddyDockLoad, CodeBuddyModelSelectionProjection } from '../sr
 import { en } from '../src/client/locales.ts'
 import type { CodeBuddyCreditKey } from '../src/client/locales.ts'
 
+/**
+ * Every segment, for the cases that assert the full line.
+ *
+ * The default (`credit` + `provider`) is asserted separately below; these
+ * fixtures keep the older expectations readable without pretending the default
+ * still renders the model and the rate.
+ */
+const ALL_SEGMENTS = ['credit', 'provider', 'model', 'rate'] as const
+
 describe('formatCompactCredits', () => {
   it('keeps small counts bare', () => {
     expect(formatCompactCredits(0)).toBe('0')
@@ -188,7 +197,7 @@ describe('buildDockLine', () => {
     const line = buildDockLine({
       lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
       next: null,
-    }, withCredit)
+    }, withCredit, ALL_SEGMENTS)
     expect(line.codeBuddy).toBe(true)
     expect(line.credits?.total).toBe(1_642)
     expect(line.rate).toEqual({ rate: 'x0.79', name: 'GLM-5.3' })
@@ -199,7 +208,7 @@ describe('buildDockLine', () => {
     const line = buildDockLine({
       lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
       next: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3-flash' },
-    }, withCredit)
+    }, withCredit, ALL_SEGMENTS)
     expect(line.rate).toEqual({ rate: 'x0.06', name: 'GLM-5.3-Flash' })
     expect(render(line.segments)).toContain('Model GLM-5.3-Flash')
   })
@@ -208,7 +217,7 @@ describe('buildDockLine', () => {
     const line = buildDockLine({
       lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'auto' },
       next: null,
-    }, withCredit)
+    }, withCredit, ALL_SEGMENTS)
     expect(line.rate).toBeNull()
     // Unknown to the catalog, so the routing id is echoed as the model name.
     expect(render(line.segments)).toBe('Credits 1,642 · Provider CodeBuddy · Model auto')
@@ -218,7 +227,7 @@ describe('buildDockLine', () => {
     const line = buildDockLine({
       lastUsed: null,
       next: { provider: 'llm-pi-ai', model: 'gpt-4o' },
-    }, { phase: 'idle' })
+    }, { phase: 'idle' }, ALL_SEGMENTS)
     expect(line.codeBuddy).toBe(false)
     expect(line.credits).toBeNull()
     expect(line.rate).toBeNull()
@@ -230,14 +239,14 @@ describe('buildDockLine', () => {
       lastUsed: null,
       // Same model id as the CodeBuddy catalog's, but another provider serves it.
       next: { provider: 'llm-pi-ai', model: 'glm-5.3' },
-    }, withCredit)
+    }, withCredit, ALL_SEGMENTS)
     expect(line.rate).toBeNull()
     expect(render(line.segments)).toBe('Provider llm-pi-ai · Model glm-5.3')
   })
 
   it('keeps a placeholder row while no model is selected', () => {
-    expect(render(buildDockLine(undefined, { phase: 'idle' }).segments)).toBe('No model selected')
-    expect(render(buildDockLine({ lastUsed: null, next: null }, { phase: 'idle' }).segments))
+    expect(render(buildDockLine(undefined, { phase: 'idle' }, ALL_SEGMENTS).segments)).toBe('No model selected')
+    expect(render(buildDockLine({ lastUsed: null, next: null }, { phase: 'idle' }, ALL_SEGMENTS).segments))
       .toBe('No model selected')
   })
 
@@ -245,7 +254,7 @@ describe('buildDockLine', () => {
     const line = buildDockLine({
       lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
       next: null,
-    }, { phase: 'loading' })
+    }, { phase: 'loading' }, ALL_SEGMENTS)
     expect(line.credits).toBeNull()
     expect(render(line.segments)).toBe('Credits … · Provider CodeBuddy · Model glm-5.3')
   })
@@ -254,7 +263,7 @@ describe('buildDockLine', () => {
     const line = buildDockLine({
       lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
       next: null,
-    }, { phase: 'ok', value: { status: 'signed-out' } })
+    }, { phase: 'ok', value: { status: 'signed-out' } }, ALL_SEGMENTS)
     expect(line.credits).toBeNull()
     expect(render(line.segments)).toBe('Credits — not signed in · Provider CodeBuddy · Model glm-5.3')
   })
@@ -264,10 +273,10 @@ describe('buildDockLine', () => {
       lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
       next: null,
     }
-    expect(render(buildDockLine(selection, { phase: 'error', message: 'HTTP 500' }).segments))
+    expect(render(buildDockLine(selection, { phase: 'error', message: 'HTTP 500' }, ALL_SEGMENTS).segments))
       .toBe('Credits unavailable · Provider CodeBuddy · Model glm-5.3')
     // Signed in, but the upstream billing call failed: still a readable row.
-    expect(render(buildDockLine(selection, signedIn()).segments))
+    expect(render(buildDockLine(selection, signedIn(), ALL_SEGMENTS).segments))
       .toBe('Credits unavailable · Provider CodeBuddy · Model GLM-5.3 · x0.79')
   })
 
@@ -275,8 +284,57 @@ describe('buildDockLine', () => {
     const line = buildDockLine({
       lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
       next: null,
-    }, signedIn({ total: 0, accounts: [] }))
+    }, signedIn({ total: 0, accounts: [] }), ALL_SEGMENTS)
     expect(line.credits?.empty).toBe(true)
     expect(render(line.segments)).toBe('Credits 0 · Provider CodeBuddy · Model GLM-5.3 · x0.79')
+  })
+
+  // #14 asked for the line to stop repeating what the model picker already
+  // shows. The provider stays because that picker never names it.
+  it('renders only credit and provider by default', () => {
+    const line = buildDockLine({
+      lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
+      next: null,
+    }, withCredit)
+    expect(render(line.segments)).toBe('Credits 1,642 · Provider CodeBuddy')
+    // The rate is still resolved for the details panel; it is just not printed.
+    expect(line.rate).toEqual({ rate: 'x0.79', name: 'GLM-5.3' })
+  })
+
+  it('honours an explicit segment choice, in render order', () => {
+    const selection = {
+      lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
+      next: null,
+    }
+    // Order comes from the caller's list, not from the tick order.
+    expect(render(buildDockLine(selection, withCredit, ['provider']).segments))
+      .toBe('Provider CodeBuddy')
+    expect(render(buildDockLine(selection, withCredit, ['model']).segments))
+      .toBe('Model GLM-5.3')
+    expect(render(buildDockLine(selection, withCredit, ['rate']).segments))
+      .toBe('x0.79')
+    expect(render(buildDockLine(selection, withCredit, ['provider', 'credit']).segments))
+      .toBe('Credits 1,642 · Provider CodeBuddy')
+  })
+
+  it('shows nothing at all when every segment is off', () => {
+    const selection = {
+      lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
+      next: null,
+    }
+    // An empty choice is deliberate, so even the placeholder stays away.
+    expect(buildDockLine(selection, withCredit, []).segments).toEqual([])
+    expect(buildDockLine(undefined, { phase: 'idle' }, []).segments).toEqual([])
+  })
+
+  it('never invents a rate or a credit figure when their segment is on', () => {
+    const foreign = { lastUsed: null, next: { provider: 'llm-pi-ai', model: 'gpt-4o' } }
+    // `rate` on a foreign model: the generic catalog has no multiplier, so the
+    // segment is simply absent rather than rendering a guessed number.
+    expect(render(buildDockLine(foreign, { phase: 'idle' }, ALL_SEGMENTS).segments))
+      .toBe('Provider llm-pi-ai · Model gpt-4o')
+    // `credit` on a foreign model: the figure is CodeBuddy-only.
+    expect(render(buildDockLine(foreign, withCredit, ALL_SEGMENTS).segments))
+      .toBe('Provider llm-pi-ai · Model gpt-4o')
   })
 })

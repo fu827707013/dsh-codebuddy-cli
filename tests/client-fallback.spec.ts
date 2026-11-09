@@ -18,46 +18,61 @@ import { describe, expect, it, vi } from 'vitest'
  * here too; a mismatch between the two is invisible to this test.
  */
 describe('client card fallback', () => {
-  it('swallows a slot registration failure instead of throwing', () => {
+  it('records a failing slot and still registers the rest', () => {
     const errors: unknown[] = []
     const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
 
-    // Simulate a DSH loader that throws on ctx.slots.inject (the rc.7
-    // "requires options.key" error). Loose `any` on purpose: we only test
-    // the try/catch boundary, not the DSH client API types.
+    // Simulate a DSH loader that rejects ONE keyed slot registration.
+    // Loose `any` on purpose: we only test the guard shape, not the DSH types.
+    const registered: string[] = []
     const fakeCtx: any = {
       effect: () => {},
       locale: { register: () => () => {}, bind: () => () => '' },
       slots: {
-        inject: () => { throw new Error('keyed slot "settings.plugin.item" requires options.key') },
+        inject: (slot: string) => {
+          if (slot === 'plugins.bundle.config') {
+            throw new Error('keyed slot "plugins.bundle.config" requires options.key')
+          }
+          registered.push(slot)
+        },
       },
     }
 
-    // Mirror of src/client/index.tsx apply() body.
+    // Mirror of src/client/index.tsx apply()'s guard. Each surface is guarded
+    // on its own, so one rejected slot must not skip the others — the defect
+    // #17 reported (one outer try/catch silently dropping every later surface).
     function apply(ctx: any): void {
-      try {
-        const namespace = 'settings.codebuddy-cli'
-        ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-codebuddy-cli: settings copy')
-        const t = ctx.locale.bind(namespace)
-        ctx.slots.inject('settings.plugin.item', () => {
-          throw new Error('not reached')
-        })
-        ctx.slots.inject('conversation.composer.dock', () => {
-          throw new Error('not reached')
-        })
-        void t
-      } catch (error: unknown) {
-        console.error('[dsh-codebuddy-cli] client card failed to load (host provider unaffected):', error)
+      const attempt = (label: string, register: () => void): void => {
+        try {
+          register()
+        } catch (error: unknown) {
+          console.error(`[dsh-codebuddy-cli] ${label} failed to register (host provider unaffected):`, error)
+        }
       }
+      const namespace = 'settings.codebuddy-cli'
+      ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-codebuddy-cli: settings copy')
+      const t = ctx.locale.bind(namespace)
+      attempt('settings tab', () => ctx.slots.inject('settings.plugins.tab', () => {}))
+      attempt('composer dock', () => ctx.slots.inject('conversation.composer.dock', () => {}))
+      attempt('bundle configuration page', () => ctx.slots.inject('plugins.bundle.config', () => {}))
+      attempt('row configuration page', () => ctx.slots.inject('plugins.row.config', () => {}))
+      void t
     }
 
     // Must not throw — the whole point of the fallback.
     expect(() => apply(fakeCtx)).not.toThrow()
 
-    // The error is visible in the console for developers.
+    // The failure is reported once, naming the surface and the cause.
     expect(errors).toHaveLength(1)
-    expect(String(errors[0])).toContain('client card failed to load')
+    expect(String(errors[0])).toContain('bundle configuration page failed to register')
     expect(String(errors[0])).toContain('requires options.key')
+
+    // Crucially, the surfaces after the failing one still registered.
+    expect(registered).toEqual([
+      'settings.plugins.tab',
+      'conversation.composer.dock',
+      'plugins.row.config',
+    ])
 
     spy.mockRestore()
   })

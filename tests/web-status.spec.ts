@@ -242,6 +242,23 @@ describe('dock preference route', () => {
     return port
   }
 
+  /** Variant that also attaches the segment writer, so the dockSegments path is exercised. */
+  async function startSegmentServer(
+    writeSegments: CodeBuddyStatusRouteOptions['setDockSegments'],
+  ): Promise<number> {
+    const deps: CodeBuddyStatusRouteOptions = {
+      store: { resolve: async () => undefined } as unknown as CodeBuddyCredentialStore,
+      client: { fetchCredits: async () => ({ total: 0, accounts: [] }) },
+      models: () => [],
+      ...writeSegments === undefined ? {} : { setDockSegments: writeSegments },
+    }
+    const server = createServer(codeBuddyDockPreferenceHandler(deps))
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as { port: number }
+    CLEANUP.push(() => new Promise<void>(resolve => server.close(() => resolve())))
+    return port
+  }
+
   const jsonHeaders = (port: number): Record<string, string> => ({
     host: `127.0.0.1:${String(port)}`,
     origin: `http://127.0.0.1:${String(port)}`,
@@ -282,6 +299,62 @@ describe('dock preference route', () => {
     const response = await requestPreference({
       port, method: 'POST', headers: jsonHeaders(port),
       body: JSON.stringify({ showDockOnOtherProviders: true }),
+    })
+    expect(response.status).toBe(501)
+  })
+
+  it('persists dockSegments in render order, not the order the caller ticked', async () => {
+    // The route documents its answer as "the persisted values". Echoing the
+    // caller's order while the Host stored render order would make the response
+    // disagree with the settings document the card re-seeds from.
+    const seen: (readonly string[])[] = []
+    const port = await startSegmentServer(async (value) => {
+      seen.push(value)
+      return true
+    })
+    const response = await requestPreference({
+      port, method: 'POST', headers: jsonHeaders(port),
+      body: JSON.stringify({ dockSegments: ['rate', 'credit', 'model'] }),
+    })
+    expect(response.status).toBe(200)
+    expect(JSON.parse(response.body)).toEqual({ dockSegments: ['credit', 'model', 'rate'] })
+    expect(seen).toEqual([['credit', 'model', 'rate']])
+  })
+
+  it('rejects an unknown dock segment instead of silently dropping it', async () => {
+    let called = false
+    const port = await startSegmentServer(async () => {
+      called = true
+      return true
+    })
+    const response = await requestPreference({
+      port, method: 'POST', headers: jsonHeaders(port),
+      body: JSON.stringify({ dockSegments: ['credit', 'nope'] }),
+    })
+    expect(response.status).toBe(400)
+    expect(called).toBe(false)
+  })
+
+  it('accepts an empty dockSegments list as a deliberate "show nothing"', async () => {
+    const seen: (readonly string[])[] = []
+    const port = await startSegmentServer(async (value) => {
+      seen.push(value)
+      return true
+    })
+    const response = await requestPreference({
+      port, method: 'POST', headers: jsonHeaders(port),
+      body: JSON.stringify({ dockSegments: [] }),
+    })
+    expect(response.status).toBe(200)
+    expect(JSON.parse(response.body)).toEqual({ dockSegments: [] })
+    expect(seen).toEqual([[]])
+  })
+
+  it('answers 501 for dockSegments when only the visibility writer is attached', async () => {
+    const port = await startPreferenceServer(async () => true)
+    const response = await requestPreference({
+      port, method: 'POST', headers: jsonHeaders(port),
+      body: JSON.stringify({ dockSegments: ['credit'] }),
     })
     expect(response.status).toBe(501)
   })

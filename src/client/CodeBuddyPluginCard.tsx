@@ -1,27 +1,29 @@
-/** CodeBuddy status card contributed to Harness Plugin configuration. */
+/** CodeBuddy status card: the body shared by the Plugins page and the Settings tab. */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-// DSH 0.1.7 renamed the icon exports: the old `…Outline14` size suffix is gone
-// and icons now come in `…OutlineRegular` (1px stroke) / `…OutlineMedium`
-// (1.3px stroke) variants. Importing the retired name yields `undefined`, which
+// The icon exports are `…OutlineRegular` (1px stroke) / `…OutlineMedium` (1.3px
+// stroke); the retired `…Outline14` size-suffixed name yields `undefined`, which
 // React rejects as an invalid element type (error #130) and the whole card
-// renders as an empty tab. `Regular` is the current 14px-weight default and is
-// what the host's own plugins use.
+// renders as an empty tab. `Regular` is the 14px-weight default the host's own
+// plugins use.
 import { IconChevronDownOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
   CODEBUDDY_DOCK_PREFERENCE_PATH,
+  CODEBUDDY_DOCK_SEGMENTS,
   CODEBUDDY_MODELS_PATH,
   CODEBUDDY_STATUS_PATH,
 } from '../status-paths.ts'
 import type {
+  CodeBuddyDockSegment,
   CodeBuddyWebModelBadge,
   CodeBuddyWebModelSelection,
   CodeBuddyWebStatus,
 } from '../status-paths.ts'
 import type { CodeBuddySettingsKey } from './locales.ts'
+import { DEFAULT_DOCK_SEGMENTS } from './credit-line.ts'
 import css from './CodeBuddyPluginCard.module.css'
 import { AccountCards } from './AccountCard.tsx'
 import { CreditStatsPanel, AccountFilterMenu } from './CreditStatsPanel.tsx'
@@ -277,62 +279,97 @@ function ModelSelection({ selection, onSaved, t }: {
 type CardTab = 'accounts' | 'models' | 'stats' | 'remaining'
 
 /**
- * The composer-dock visibility switch.
+ * The composer-line preference: whether the row shows on a foreign provider,
+ * and which pieces it renders.
  *
- * The dock row is shared with the host's session-stats strip, so while a
- * non-CodeBuddy provider is selected it costs width without carrying any credit
- * figure (#6). Whether that trade is worth it depends on the window and on how
- * much the operator values seeing the provider name, so the choice is theirs.
+ * Two independent choices share one block rather than two headings:
+ *
+ * - Visibility (#6): the dock row is shared with the host's session-stats strip,
+ *   so while a non-CodeBuddy provider is selected it costs width without
+ *   carrying any credit figure. Whether that trade is worth it depends on the
+ *   window, so the choice is the operator's.
+ * - Segments (#14): `provider` is the only place the provider name appears —
+ *   the composer's own picker shows the model but not where it comes from — so
+ *   it stays on by default. `model` repeats that picker and is off by default;
+ *   it was the segment pushing the host's stats into ellipsis. `credit` is the
+ *   row's purpose. `rate` only renders when the catalog knows the multiplier.
+ *
+ * Every write sends the whole segment set (the Host persists it in render
+ * order), and the block re-seeds from the answer instead of trusting the
+ * optimistic flip.
  */
-function DockPreference({ value, writable, onSaved, t }: {
+function DockPreference({ value, segments, writable, onSaved, t }: {
   /** Host value; undefined means the document predates the switch. */
   value: boolean | undefined
+  /** Host segments; undefined means the document predates the option. */
+  segments: readonly CodeBuddyDockSegment[] | undefined
   writable: boolean
   /** Ask the card to re-read the status document after a landed write. */
   onSaved?: () => void
   t: CodeBuddyPluginCardInjected['t']
 }): React.ReactNode {
-  // An untouched install keeps the row, matching the schema default.
-  const host = value ?? true
-  const [checked, setChecked] = useState(host)
-  const [seeded, setSeeded] = useState(host)
+  // An untouched install keeps the row and the schema default segments.
+  const hostVisible = value ?? true
+  const hostSegments = segments === undefined ? DEFAULT_DOCK_SEGMENTS : segments
+  const [checked, setChecked] = useState(hostVisible)
+  const [chosen, setChosen] = useState<readonly CodeBuddyDockSegment[]>(hostSegments)
+  const [seededVisible, setSeededVisible] = useState(hostVisible)
+  const [seededSegments, setSeededSegments] = useState(hostSegments.join(','))
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
 
   // Re-seed when the host document changes under us (another tab, a refresh).
-  if (seeded !== host && !saving) {
-    setSeeded(host)
-    setChecked(host)
+  const segmentsKey = hostSegments.join(',')
+  if (seededVisible !== hostVisible && !saving) {
+    setSeededVisible(hostVisible)
+    setChecked(hostVisible)
+  }
+  if (seededSegments !== segmentsKey && !saving) {
+    setSeededSegments(segmentsKey)
+    setChosen(hostSegments)
   }
 
-  const save = async (next: boolean): Promise<void> => {
+  const post = async (body: Record<string, unknown>): Promise<void> => {
+    const response = await fetch(CODEBUDDY_DOCK_PREFERENCE_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) {
+      const detail: unknown = await response.json().catch(() => undefined)
+      const message = typeof (detail as { error?: unknown } | undefined)?.error === 'string'
+        ? (detail as { error: string }).error
+        : `HTTP ${String(response.status)}`
+      throw new Error(message)
+    }
+    // Re-seed from the answer rather than trusting the optimistic flip.
+    const answer: unknown = await response.json().catch(() => undefined)
+    const landedVisible = (answer as { showDockOnOtherProviders?: unknown } | undefined)?.showDockOnOtherProviders
+    if (typeof landedVisible === 'boolean') {
+      setChecked(landedVisible)
+      setSeededVisible(landedVisible)
+    }
+    const landedSegments = (answer as { dockSegments?: unknown } | undefined)?.dockSegments
+    if (Array.isArray(landedSegments)) {
+      const known = landedSegments.filter(
+        (item): item is CodeBuddyDockSegment =>
+          typeof item === 'string' && (CODEBUDDY_DOCK_SEGMENTS as readonly string[]).includes(item),
+      )
+      setChosen(known)
+      setSeededSegments(known.join(','))
+    }
+  }
+
+  const saveVisibility = async (next: boolean): Promise<void> => {
     const previous = checked
     setChecked(next)
     setSaving(true)
     setSaved(false)
     setError(undefined)
     try {
-      const response = await fetch(CODEBUDDY_DOCK_PREFERENCE_PATH, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ showDockOnOtherProviders: next }),
-      })
-      if (!response.ok) {
-        const detail: unknown = await response.json().catch(() => undefined)
-        const message = typeof (detail as { error?: unknown } | undefined)?.error === 'string'
-          ? (detail as { error: string }).error
-          : `HTTP ${String(response.status)}`
-        throw new Error(message)
-      }
-      // Re-seed from the answer rather than trusting the optimistic flip.
-      const body: unknown = await response.json().catch(() => undefined)
-      const landed = (body as { showDockOnOtherProviders?: unknown } | undefined)?.showDockOnOtherProviders
-      if (typeof landed === 'boolean') {
-        setChecked(landed)
-        setSeeded(landed)
-      }
+      await post({ showDockOnOtherProviders: next })
       setSaved(true)
       onSaved?.()
     } catch (cause: unknown) {
@@ -343,6 +380,35 @@ function DockPreference({ value, writable, onSaved, t }: {
     }
   }
 
+  const toggleSegment = async (segment: CodeBuddyDockSegment, on: boolean): Promise<void> => {
+    const previous = chosen
+    // Keep render order regardless of click order, so the checkbox list and the
+    // composed line always read the same way.
+    const next = CODEBUDDY_DOCK_SEGMENTS.filter(name =>
+      name === segment ? on : chosen.includes(name))
+    setChosen(next)
+    setSaving(true)
+    setSaved(false)
+    setError(undefined)
+    try {
+      await post({ dockSegments: [...next] })
+      setSaved(true)
+      onSaved?.()
+    } catch (cause: unknown) {
+      setChosen(previous)
+      setError(cause instanceof Error ? cause.message : t('requestFailed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const segmentLabel: Record<CodeBuddyDockSegment, CodeBuddySettingsKey> = {
+    credit: 'dockSegmentCredit',
+    provider: 'dockSegmentProvider',
+    model: 'dockSegmentModel',
+    rate: 'dockSegmentRate',
+  }
+
   return (
     <div className={css.quotaList} style={{ marginBottom: 16 }}>
       <h3 style={quotaTitleStyle}>{t('dockPreferenceHeading')}</h3>
@@ -351,7 +417,7 @@ function DockPreference({ value, writable, onSaved, t }: {
           type="checkbox"
           checked={checked}
           disabled={!writable || saving}
-          onChange={(event) => { void save(event.target.checked) }}
+          onChange={(event) => { void saveVisibility(event.target.checked) }}
           style={{ marginTop: 2 }}
         />
         <span>
@@ -361,15 +427,45 @@ function DockPreference({ value, writable, onSaved, t }: {
         </span>
       </label>
       <p className={css.bodyText}>{t('dockPreferenceHint')}</p>
+      <p className={css.bodyText} style={{ marginTop: 12 }}>{t('dockSegmentsHint')}</p>
+      <div className={css.quotaList} style={{ marginTop: 8 }}>
+        {CODEBUDDY_DOCK_SEGMENTS.map(segment => (
+          <label
+            key={segment}
+            style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: writable ? 'pointer' : 'default' }}
+          >
+            <input
+              type="checkbox"
+              checked={chosen.includes(segment)}
+              disabled={!writable || saving}
+              onChange={(event) => { void toggleSegment(segment, event.target.checked) }}
+              style={{ marginTop: 2 }}
+            />
+            <span>{t(segmentLabel[segment])}</span>
+          </label>
+        ))}
+      </div>
+      <p className={css.bodyText}>{t('dockSegmentsEmpty')}</p>
       {writable ? null : <p className={css.bodyText}>{t('dockPreferenceReadOnly')}</p>}
       {error === undefined ? null : <p className={css.bodyError}>{t('dockPreferenceSaveFailed', { message: error })}</p>}
     </div>
   )
 }
 /** Render CodeBuddy sign-in state and the tabbed panel as one expandable card. */
-export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
+/**
+ * The working body shared by both configuration surfaces.
+ *
+ * Owns the status read, the polling loop and the tab panels. The card below
+ * mounts it inside a collapsible shell; `CodeBuddyConfigPage` mounts it
+ * directly on the Plugins page. Extracted rather than duplicated so the two
+ * surfaces cannot drift on what they show or when they poll.
+ */
+export function CodeBuddyConfigBody({ t }: { t: CodeBuddyPluginCardInjected['t'] }): React.ReactNode {
   if (t === undefined) throw new Error('CodeBuddy plugin card requires its translation function')
-  const [open, setOpen] = useState(false)
+  // No `open` state here: this body IS the visible surface. The collapsible card
+  // below decides whether to mount it at all, so mounting already means "show
+  // me the data" — gating the read behind a local flag that nothing flips left
+  // the Plugins-page view permanently stuck on its initial signed-out state.
   const [tab, setTab] = useState<CardTab>('accounts')
   const [status, setStatus] = useState<CodeBuddyWebStatus>({ status: 'signed-out' })
   const [busy, setBusy] = useState(false)
@@ -404,21 +500,20 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
   const handleChanged = useCallback((): void => { void refresh() }, [refresh])
 
   useEffect(() => {
-    if (!open) return
     const controller = new AbortController()
     void refresh(controller.signal)
     return () => { controller.abort() }
-  }, [open, refresh])
+  }, [refresh])
 
   useEffect(() => {
-    if (!open || status.status !== 'signed-in') return
+    if (status.status !== 'signed-in') return
     const controller = new AbortController()
     const timer = window.setInterval(() => { void refresh(controller.signal) }, POLL_INTERVAL_MS)
     return () => {
       window.clearInterval(timer)
       controller.abort()
     }
-  }, [open, refresh, status.status])
+  }, [refresh, status.status])
 
   const manualRefresh = async (): Promise<void> => {
     setBusy(true)
@@ -449,22 +544,7 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
   ]
 
   return (
-    <li className={open ? cx(css.card, css.cardOpen) : cx(css.card)}>
-      <button
-        type="button"
-        className={css.header}
-        aria-expanded={open}
-        aria-label={`${t(open ? 'collapse' : 'expand')}: ${title}`}
-        onClick={() => { setOpen(!open) }}
-      >
-        <span className={css.headText}>
-          <span className={css.name}>{title}</span>
-          <span className={css.description}>{t('intro')}</span>
-        </span>
-        <IconChevronDownOutlineRegular className={open ? cx(css.chevron, css.chevronOpen) : cx(css.chevron)} />
-      </button>
-      {open
-        ? <div className={css.body}>
+    <div className={css.body}>
             <div className={css.bodyBlock}>
               <div className={css.bodyRow}>
                 <span className={css.statusLine} role="status">
@@ -529,7 +609,10 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
                   */}
                   <DockPreference
                     value={status.status === 'error' ? undefined : status.showDockOnOtherProviders}
-                    writable={status.status !== 'error' && status.showDockOnOtherProvidersWritable === true}
+                    segments={status.status === 'error' ? undefined : status.dockSegments}
+                    writable={status.status !== 'error'
+                      && status.showDockOnOtherProvidersWritable === true
+                      && status.dockSegmentsWritable === true}
                     onSaved={() => { void refresh() }}
                     t={t}
                   />
@@ -594,8 +677,33 @@ export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
                 </div>
               ) : null}
             </div>
-          </div>
-        : null}
+    </div>
+  )
+}
+
+/** Render CodeBuddy sign-in state and the tabbed panel as one expandable card. */
+export function CodeBuddyPluginCard({ t }: CodeBuddyPluginCardProps) {
+  if (t === undefined) throw new Error('CodeBuddy plugin card requires its translation function')
+  const [open, setOpen] = useState(false)
+
+  const title = t('title')
+
+  return (
+    <li className={open ? cx(css.card, css.cardOpen) : cx(css.card)}>
+      <button
+        type="button"
+        className={css.header}
+        aria-expanded={open}
+        aria-label={`${t(open ? 'collapse' : 'expand')}: ${title}`}
+        onClick={() => { setOpen(!open) }}
+      >
+        <span className={css.headText}>
+          <span className={css.name}>{title}</span>
+          <span className={css.description}>{t('intro')}</span>
+        </span>
+        <IconChevronDownOutlineRegular className={open ? cx(css.chevron, css.chevronOpen) : cx(css.chevron)} />
+      </button>
+      {open ? <CodeBuddyConfigBody t={t} /> : null}
     </li>
   )
 }

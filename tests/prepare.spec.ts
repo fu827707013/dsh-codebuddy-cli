@@ -46,6 +46,60 @@ describe('prepareChatBody', () => {
     expect(body['stream']).toBe(true)
   })
 
+  it('drops reasoning_effort "off" so Default means "model default"', () => {
+    // Regression: `off` used to reach the wire as the string "off" (the adapter
+    // mapped it to a string whenever canDisableThinking was true, and pi-ai
+    // transmits a map string verbatim). CodeBuddy's ladder is low…max only and
+    // rejects everything else with code 11150, so every Default selection made
+    // the turn fail. Omitting the field is how "no explicit effort" is spelled.
+    const body = JSON.parse(prepareChatBody(JSON.stringify({
+      model: 'glm-5.3',
+      messages: [{ role: 'user', content: 'hi' }],
+      reasoning_effort: 'off',
+    })))
+    expect(body).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('drops any reasoning_effort outside the upstream vocabulary', () => {
+    // pi-ai resolves an unknown level through `thinkingLevelMap[level] ?? level`,
+    // so a level the map holds as null falls back to its own name. Forwarding a
+    // value the upstream does not recognize fails the turn; dropping it degrades
+    // to the model default instead.
+    //
+    // `medium` is deliberately NOT in this list: it is a legitimate upstream
+    // value (some models declare it), so the shim has no business removing it
+    // even when the selected model's own ladder omits it — that trimming is the
+    // adapter's job via `thinkingLevelMap`, and the picker never offers it.
+    for (const effort of ['off', 'none', 'minimal', '', 'HIGH', 42, null]) {
+      const body = JSON.parse(prepareChatBody(JSON.stringify({
+        model: 'glm-5.3',
+        messages: [{ role: 'user', content: 'hi' }],
+        reasoning_effort: effort,
+      })))
+      expect(body).not.toHaveProperty('reasoning_effort')
+    }
+  })
+
+  it('keeps every effort value the upstream actually accepts', () => {
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      const body = JSON.parse(prepareChatBody(JSON.stringify({
+        model: 'glm-5.3',
+        messages: [{ role: 'user', content: 'hi' }],
+        reasoning_effort: effort,
+      })))
+      expect(body['reasoning_effort']).toBe(effort)
+    }
+  })
+
+  it('leaves a body without reasoning_effort untouched', () => {
+    const body = JSON.parse(prepareChatBody(JSON.stringify({
+      model: 'glm-5.3',
+      messages: [{ role: 'user', content: 'hi' }],
+    })))
+    expect(body).not.toHaveProperty('reasoning_effort')
+    expect(body['stream']).toBe(true)
+  })
+
   it('rewrites developer messages to system (upstream rejects developer)', () => {
     const body = JSON.parse(prepareChatBody(JSON.stringify({
       model: 'deepseek-v4-flash',

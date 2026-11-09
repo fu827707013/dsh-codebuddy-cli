@@ -102,7 +102,9 @@ describe('CodeBuddy Host settings integration', () => {
     expect(autoResolved.reasoning?.efforts.map(effort => effort.id).sort())
       .toEqual(['high', 'low', 'max', 'medium', 'xhigh'])
     const flashResolved = await ctx.llm.resolveModelInfo('codebuddy-cli', 'glm-5.3-flash')
-    expect(flashResolved.reasoning?.efforts.map(effort => effort.id).sort()).toEqual(['high', 'low', 'max', 'off'])
+    // No `off`: CodeBuddy has no wire spelling for it (ladder is low…max), so
+    // offering it only produced a rejected `reasoning_effort: "off"` on Default.
+    expect(flashResolved.reasoning?.efforts.map(effort => effort.id).sort()).toEqual(['high', 'low', 'max'])
 
     // Image modalities follow the per-model catalog flag (fallback list here):
     // image-capable entries expose `image`, glm-5.1 stays text-only.

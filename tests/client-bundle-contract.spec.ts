@@ -28,13 +28,15 @@ const maybe = bundle === undefined ? describe.skip : describe
 
 maybe('built client bundle slot + icon contract', () => {
   it('registers the current plugin-configuration slot name', () => {
-    // `settings.plugins.tab` is what DSH 0.1.7 renders; the older
-    // `settings.plugin.item` is consumed by nothing any more.
+    // `settings.plugins.tab` is the Settings → Plugins tab this release supports.
     expect(bundle).toContain('settings.plugins.tab')
   })
 
-  it('still registers the legacy slot name so older DSH builds keep working', () => {
-    expect(bundle).toContain('settings.plugin.item')
+  it('does not register the retired pre-0.1.7 slot name', () => {
+    // `settings.plugin.item` is not declared by any host in the supported range
+    // (`engines.dsh >= 0.2.1-rc.2`), so registering it would only add a dead
+    // entry. Users below that range are told to install the older release.
+    expect(bundle).not.toContain('settings.plugin.item')
   })
 
   it('labels the tab, so the strip never shows an unlabelled blank tab', () => {
@@ -62,5 +64,33 @@ maybe('built client bundle slot + icon contract', () => {
     // remove the provider name the reporter asked to keep.
     expect(bundle).toMatch(/if \(!codeBuddy && !showOnOtherProviders\)/)
     expect(bundle).not.toMatch(/if \(!codeBuddy\)\s*return null/)
+  })
+
+  it('loads the status on mount without gating it on a collapse flag', () => {
+    // `CodeBuddyConfigBody` is mounted directly on the Plugins page, where there
+    // is no collapsible shell to flip any flag. When it still carried the card's
+    // `open` state — default false and never set true on that surface — the
+    // status read never fired and the page showed a permanent "not signed in"
+    // while the host answered `signed-in`. The body must fetch on mount.
+    //
+    // The check is scoped to the body's own source region: other components
+    // legitimately use `open` (the dock's dismiss-on-outside-click effect), so a
+    // whole-bundle search would fail for the wrong reason.
+    const source = bundle ?? ''
+    expect(source).toContain('CodeBuddyConfigBody')
+    const body = source.slice(source.indexOf('function CodeBuddyConfigBody'))
+    const region = body.slice(0, body.indexOf('function CodeBuddyPluginCard'))
+    expect(region.length).toBeGreaterThan(0)
+    expect(region).not.toMatch(/if \(!open\)/)
+    expect(region).not.toMatch(/\[open,/)
+    // The initial signed-out placeholder must be replaced by a real read: the
+    // mount effect calls refresh with a fresh AbortController, ungated.
+    expect(region).toMatch(/new AbortController\(\)/)
+  })
+
+  it('keeps the collapsible card as a thin shell around the body', () => {
+    // The card owns `open` and the header; the body owns the data. Sharing one
+    // state between the two is what produced the regression above.
+    expect(bundle).toMatch(/open \? .*CodeBuddyConfigBody/)
   })
 })

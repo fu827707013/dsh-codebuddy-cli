@@ -18,6 +18,8 @@ import { regionOf } from './upstream.ts'
 import { filterEnabledModels } from './catalog.ts'
 import type { CodeBuddyModelInfo } from './catalog.ts'
 import { hostIsLoopback, originIsLoopback } from './loopback.ts'
+import { DOCK_SEGMENTS } from './index.ts'
+import type { DockSegment } from './index.ts'
 import { generateAccountId } from './oauth.ts'
 import {
   CODEBUDDY_CHECKIN_PATH,
@@ -96,6 +98,14 @@ export interface CodeBuddyStatusRouteOptions {
   showDockOnOtherProviders?: () => boolean | undefined
   /** Persist the dock visibility preference; false when no settings provider is attached. */
   setShowDockOnOtherProviders?: (value: boolean) => Promise<boolean>
+  /**
+   * Read which pieces the composer line renders. Undefined means "the schema
+   * default" (`credit` + `provider`), which is what a document written before
+   * this option existed should look like.
+   */
+  dockSegments?: () => readonly DockSegment[] | undefined
+  /** Persist the dock segments; false when no settings provider is attached. */
+  setDockSegments?: (value: readonly DockSegment[]) => Promise<boolean>
   /** Whether a settings provider is attached and could accept a write. */
   settingsWritable?: () => boolean
   /**
@@ -117,6 +127,15 @@ export interface CodeBuddyStatusRouteOptions {
 
 /** Largest enabled-model write the route accepts (bounds an untrusted body). */
 const MODELS_BODY_LIMIT = 64 * 1024
+
+/**
+ * The 400 answer for a malformed dock-preference body.
+ *
+ * Both fields are optional but at least one is required, so the message names
+ * the shape rather than either field alone.
+ */
+const EXPECTED_DOCK_PREFERENCE =
+  'expected {"showDockOnOtherProviders"?: boolean, "dockSegments"?: ("credit"|"provider"|"model"|"rate")[]}'
 
 /** Redact token-like content before it crosses to the browser. */
 function safeMessage(error: unknown): string {
@@ -322,12 +341,18 @@ export async function withAccounts(
   const withDockPreference = (document: CodeBuddyWebStatus): CodeBuddyWebStatus => {
     if (document.status === 'error') return document
     const preference = deps.showDockOnOtherProviders?.()
-    if (preference === undefined) return document
+    const segments = deps.dockSegments?.()
+    // Both fields are optional on the wire; a host that predates them simply
+    // omits them and the client falls back to the same defaults the schema uses.
+    if (preference === undefined && segments === undefined) return document
+    const writable = deps.settingsWritable?.() ?? false
     return {
       ...document,
-      showDockOnOtherProviders: preference,
+      ...preference === undefined ? {} : { showDockOnOtherProviders: preference },
       showDockOnOtherProvidersWritable:
-        deps.setShowDockOnOtherProviders !== undefined && (deps.settingsWritable?.() ?? false),
+        deps.setShowDockOnOtherProviders !== undefined && writable,
+      ...segments === undefined ? {} : { dockSegments: [...segments] },
+      dockSegmentsWritable: deps.setDockSegments !== undefined && writable,
     }
   }
   status = withDockPreference(status)
@@ -569,8 +594,9 @@ export function codeBuddyDockPreferenceHandler(
       return
     }
     if (!checkLoopbackPost(req, res)) return
-    const write = deps.setShowDockOnOtherProviders
-    if (write === undefined) {
+    const writeVisibility = deps.setShowDockOnOtherProviders
+    const writeSegments = deps.setDockSegments
+    if (writeVisibility === undefined && writeSegments === undefined) {
       json(res, 501, { error: 'settings-not-writable' })
       return
     }
@@ -579,21 +605,62 @@ export function codeBuddyDockPreferenceHandler(
       try {
         body = JSON.parse(await readBody(req))
       } catch {
-        json(res, 400, { error: 'expected {"showDockOnOtherProviders": boolean}' })
+        json(res, 400, { error: EXPECTED_DOCK_PREFERENCE })
         return
       }
-      const value = (body as { showDockOnOtherProviders?: unknown } | null)?.showDockOnOtherProviders
-      if (typeof value !== 'boolean') {
-        json(res, 400, { error: 'expected {"showDockOnOtherProviders": boolean}' })
+      const record = body as { showDockOnOtherProviders?: unknown; dockSegments?: unknown } | null
+      const visibility = record?.showDockOnOtherProviders
+      const segments = record?.dockSegments
+      // At least one field must be present and well-formed; each is validated
+      // independently so a bad value never half-applies the other field.
+      if (visibility === undefined && segments === undefined) {
+        json(res, 400, { error: EXPECTED_DOCK_PREFERENCE })
         return
       }
-      if (!await write(value)) {
-        json(res, 501, { error: 'settings-not-writable' })
+      if (visibility !== undefined && typeof visibility !== 'boolean') {
+        json(res, 400, { error: EXPECTED_DOCK_PREFERENCE })
         return
       }
-      // Answer with the persisted value so the card re-seeds from the Host
+      let ordered: DockSegment[] | undefined
+      if (segments !== undefined) {
+        if (!Array.isArray(segments) || segments.some(item => typeof item !== 'string')) {
+          json(res, 400, { error: EXPECTED_DOCK_PREFERENCE })
+          return
+        }
+        const known = segments.filter(
+          (item): item is DockSegment =>
+            (DOCK_SEGMENTS as readonly string[]).includes(item),
+        )
+        // An unknown name is a client/server drift, not an empty choice: reject
+        // it so the write cannot silently drop a segment the card meant to keep.
+        if (known.length !== segments.length) {
+          json(res, 400, { error: EXPECTED_DOCK_PREFERENCE })
+          return
+        }
+        // Normalize to render order here, not merely at write time: the answer
+        // below is documented as "the persisted values", and echoing the order
+        // the caller happened to tick would make that a lie while the stored
+        // document said something else.
+        ordered = DOCK_SEGMENTS.filter(segment => known.includes(segment))
+      }
+      const answer: { showDockOnOtherProviders?: boolean; dockSegments?: string[] } = {}
+      if (visibility !== undefined) {
+        if (writeVisibility === undefined || !await writeVisibility(visibility)) {
+          json(res, 501, { error: 'settings-not-writable' })
+          return
+        }
+        answer.showDockOnOtherProviders = visibility
+      }
+      if (ordered !== undefined) {
+        if (writeSegments === undefined || !await writeSegments(ordered)) {
+          json(res, 501, { error: 'settings-not-writable' })
+          return
+        }
+        answer.dockSegments = ordered
+      }
+      // Answer with the persisted values so the card re-seeds from the Host
       // instead of trusting its own optimistic state.
-      json(res, 200, { showDockOnOtherProviders: value })
+      json(res, 200, answer)
     } catch (error: unknown) {
       json(res, 500, { error: safeMessage(error) })
     }

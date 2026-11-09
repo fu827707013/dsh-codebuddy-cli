@@ -388,7 +388,7 @@ describe('CodeBuddyUpstreamClient.fetchUsage', () => {
     expect(stats.status).toBe('complete')
     expect(stats.summary.usageToday).toBeCloseTo(1.5)
     expect(stats.summary.usage7Days).toBeCloseTo(3.5)
-    expect(stats.summary.usageThisMonth).toBeGreaterThanOrEqual(8.5)
+    expect(stats.summary.usageThisMonth).toBeGreaterThanOrEqual(3.5)
     expect(stats.requests).toHaveLength(3)
     expect(stats.requests[0]!.requestId).toBe('r1')
     // Daily series is zero-filled across the whole window.
@@ -399,6 +399,39 @@ describe('CodeBuddyUpstreamClient.fetchUsage', () => {
     const modelA = stats.models.find(m => m.model === 'model-a')
     expect(modelA?.requestCount).toBe(2)
     expect(modelA?.credit).toBeCloseTo(3.5)
+  })
+
+  it('counts month usage by calendar month, not by the 7-day window', async () => {
+    // The month figure is labelled "本月消耗" (this calendar month), so a record
+    // from the previous month must not be summed into it even when it still sits
+    // inside the rolling 7-day window. Anchoring both rows to explicit calendar
+    // dates keeps this assertion independent of the day the suite runs on — the
+    // older version assumed "10 days ago" was always in the same month, which is
+    // false for the first ten days of any month.
+    const stamp = (date: Date): { date: string; time: string } => {
+      const pad = (v: number): string => String(v).padStart(2, '0')
+      const key = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+      return { date: key, time: `${key} 12:00:00` }
+    }
+    const now = new Date()
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0)
+    const priorMonthDate = new Date(startOfMonth.getTime() - 24 * 60 * 60 * 1000)
+    const inMonth = stamp(startOfMonth)
+    const priorMonth = stamp(priorMonthDate)
+    const rows = [
+      { requestId: 'r1', credit: 2, model: 'model-a', client: 'cli', requestTime: inMonth.time },
+      { requestId: 'r2', credit: 5, model: 'model-b', client: 'cli', requestTime: priorMonth.time },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => fakeResponse(usageEnvelope(2, rows))))
+
+    const stats = await new CodeBuddyUpstreamClient().fetchUsage(CREDENTIAL)
+
+    // Only the row dated inside the current calendar month counts.
+    expect(stats.summary.usageThisMonth).toBeCloseTo(2)
+    // The 7-day window is a separate, rolling measure and may include the prior
+    // month's row when that row is close enough to today.
+    const daysBack = Math.floor((now.getTime() - priorMonthDate.getTime()) / (24 * 60 * 60 * 1000))
+    if (daysBack < 7) expect(stats.summary.usage7Days).toBeCloseTo(7)
   })
 
   it('paginates when the first page is incomplete', async () => {

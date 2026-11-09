@@ -6,9 +6,20 @@
  * @module dsh-codebuddy-cli/credit-line
  */
 
-import { CODEBUDDY_PROVIDER_ID } from '../status-paths.ts'
+import { CODEBUDDY_PROVIDER_ID, CODEBUDDY_DOCK_SEGMENTS } from '../status-paths.ts'
 import type { CodeBuddyWebRateMap } from '../status-paths.ts'
 import type { CodeBuddyCreditKey } from './locales.ts'
+
+/**
+ * A segment name from the wire contract.
+ *
+ * `DEFAULT_DOCK_SEGMENTS` is duplicated here rather than imported from
+ * `index.ts`: that module is the host half and pulls the provider in, which the
+ * client bundle must not do. `tests/dock-segments.spec.ts` asserts the two lists
+ * and this default stay in step.
+ */
+type CodeBuddyDockSegmentName = (typeof CODEBUDDY_DOCK_SEGMENTS)[number]
+export const DEFAULT_DOCK_SEGMENTS: readonly CodeBuddyDockSegmentName[] = ['credit', 'provider']
 
 /**
  * Display spelling of this plugin's provider.
@@ -218,41 +229,57 @@ function creditSegment(load: CodeBuddyDockLoad, credits: CodeBuddyCreditLine | n
  * stable row whether the user is on a CodeBuddy model, on another provider, or
  * has not picked a model yet.
  *
+ * Which pieces appear is the operator's choice (`dockSegments`), filtered here
+ * in render order: `credit`, `provider`, `model`, `rate`. The filter only ever
+ * REMOVES pieces — a segment whose data is unavailable still drops out on its
+ * own terms, so ticking `rate` never invents a multiplier the catalog lacks and
+ * ticking `credit` on a foreign provider never claims a CodeBuddy figure.
+ *
  * - CodeBuddy selection: credit state, then provider, model and (only when the
  *   catalog knows it) the multiplier.
  * - Any other provider: provider and model as the projection spells them. No
  *   credit piece (the figure is CodeBuddy-only) and no multiplier — the generic
  *   DSH ModelCatalog carries no rate field, so inventing one would be a lie.
- * - No selection yet: a single placeholder piece, so the row still has content.
+ * - No selection yet: a single placeholder piece, so the row still has content
+ *   — unless the operator turned every segment off, which is a deliberate
+ *   "show nothing" and is honoured.
  */
 export function buildDockLine(
   selection: CodeBuddyModelSelectionProjection | undefined,
   load: CodeBuddyDockLoad,
+  enabled: readonly CodeBuddyDockSegmentName[] = DEFAULT_DOCK_SEGMENTS,
 ): CodeBuddyDockLine {
   const current = currentModelSelection(selection)
   const codeBuddy = isCodeBuddySelection(selection)
   const status = load.phase === 'ok' ? load.value : undefined
   const credits = codeBuddy && status?.status === 'signed-in' ? buildCreditLine(status.credits) : null
   const rate = codeBuddy ? currentCodeBuddyRate(selection, status?.catalog) : null
+  const on = (name: CodeBuddyDockSegmentName): boolean => enabled.includes(name)
   const segments: CodeBuddyDockSegment[] = []
-  if (codeBuddy) segments.push(creditSegment(load, credits))
+  if (codeBuddy && on('credit')) segments.push(creditSegment(load, credits))
   if (current === null) {
-    segments.push({ kind: 'copy', key: 'dockNoModel' })
+    // The placeholder explains why the row is empty, so it only belongs there
+    // when something else was actually asked for.
+    if (enabled.length > 0) segments.push({ kind: 'copy', key: 'dockNoModel' })
     return { segments, codeBuddy, credits, rate }
   }
-  segments.push({
-    kind: 'copy',
-    key: 'dockProvider',
-    params: { provider: codeBuddy ? CODEBUDDY_PROVIDER_LABEL : current.provider },
-  })
-  segments.push({
-    kind: 'copy',
-    key: 'dockModel',
-    // The catalog's display name reads better than the routing id, but only
-    // this plugin's catalog is available here; a foreign model keeps its id.
-    params: { model: (codeBuddy ? status?.catalog?.names[current.model] : undefined) ?? current.model },
-  })
-  if (rate !== null) segments.push({ kind: 'text', text: rate.rate })
+  if (on('provider')) {
+    segments.push({
+      kind: 'copy',
+      key: 'dockProvider',
+      params: { provider: codeBuddy ? CODEBUDDY_PROVIDER_LABEL : current.provider },
+    })
+  }
+  if (on('model')) {
+    segments.push({
+      kind: 'copy',
+      key: 'dockModel',
+      // The catalog's display name reads better than the routing id, but only
+      // this plugin's catalog is available here; a foreign model keeps its id.
+      params: { model: (codeBuddy ? status?.catalog?.names[current.model] : undefined) ?? current.model },
+    })
+  }
+  if (rate !== null && on('rate')) segments.push({ kind: 'text', text: rate.rate })
   return { segments, codeBuddy, credits, rate }
 }
 

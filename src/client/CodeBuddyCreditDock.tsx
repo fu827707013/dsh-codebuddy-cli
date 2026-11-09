@@ -29,8 +29,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
-import { CODEBUDDY_STATUS_PATH } from '../status-paths.ts'
-import type { CodeBuddyWebStatus } from '../status-paths.ts'
+import { CODEBUDDY_STATUS_PATH, CODEBUDDY_DOCK_SEGMENTS } from '../status-paths.ts'
+import type { CodeBuddyWebStatus, CodeBuddyDockSegment } from '../status-paths.ts'
 import {
   buildDockLine,
   formatCreditTotal,
@@ -38,6 +38,7 @@ import {
   renderDockSegments,
 } from './credit-line.ts'
 import type { CodeBuddyDockLoad, CodeBuddyModelSelectionProjection } from './credit-line.ts'
+import { DEFAULT_DOCK_SEGMENTS } from './credit-line.ts'
 import type { CodeBuddyCreditKey } from './locales.ts'
 
 /** Localized copy injected by the browser-plugin registration. */
@@ -246,6 +247,9 @@ function CreditDockBody({ selection, codeBuddy, useSession, t }: {
   // Defaults to visible: an untouched install keeps showing the row, and a
   // failed read must never make it disappear.
   const [showOnOtherProviders, setShowOnOtherProviders] = useState(true)
+  // Same mount-time read, same failure policy: an unreadable document keeps the
+  // schema default (credit + provider) rather than blanking the row.
+  const [dockSegments, setDockSegments] = useState<readonly CodeBuddyDockSegment[]>(DEFAULT_DOCK_SEGMENTS)
   useEffect(() => {
     let live = true
     const read = async (): Promise<void> => {
@@ -258,6 +262,16 @@ function CreditDockBody({ selection, codeBuddy, useSession, t }: {
         const value: unknown = await response.json()
         const flag = (value as { showDockOnOtherProviders?: unknown } | null)?.showDockOnOtherProviders
         if (live && typeof flag === 'boolean') setShowOnOtherProviders(flag)
+        const segments = (value as { dockSegments?: unknown } | null)?.dockSegments
+        if (live && Array.isArray(segments)) {
+          const known = segments.filter(
+            (item): item is CodeBuddyDockSegment =>
+              typeof item === 'string' && (CODEBUDDY_DOCK_SEGMENTS as readonly string[]).includes(item),
+          )
+          // A stored empty array is a real choice ("show nothing"); an array of
+          // only unknown names is drift, so it keeps the default instead.
+          if (known.length === segments.length) setDockSegments(known)
+        }
       } catch {
         // Keep the default (row visible); a failed read must not hide the row.
       }
@@ -341,7 +355,7 @@ function CreditDockBody({ selection, codeBuddy, useSession, t }: {
   // hook above has already run, so returning here keeps the hook order stable.
   if (!codeBuddy && !showOnOtherProviders) return null
 
-  const line = buildDockLine(selection, load)
+  const line = buildDockLine(selection, load, dockSegments ?? DEFAULT_DOCK_SEGMENTS)
   const lineText = renderDockSegments(line.segments, t)
   const status = load.phase === 'ok' && load.value.status === 'signed-in' ? load.value : undefined
   const credits = line.credits

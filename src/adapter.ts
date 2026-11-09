@@ -168,9 +168,17 @@ const STANDARD_EFFORTS: readonly CodeBuddyEffort[] = ['low', 'medium', 'high', '
  *   DeepSeek-V4.1-Flash appear to have no effort selector while GLM-5.3-Flash
  *   did.
  *
- * `off` is offered only when the model explicitly reports that thinking can be
- * disabled (`canDisableThinking === true`); every other level maps to its wire
- * spelling, and an unsupported one maps to `null`.
+ * `off` never carries a wire spelling. pi-ai treats `off` as "send no
+ * `reasoning_effort` at all", and it resolves that by reading this map: with a
+ * `null` entry it omits the field, while a *string* entry is transmitted
+ * verbatim. Since CodeBuddy's ladder is exactly `low…max` and it rejects any
+ * other spelling (`code 11150`), mapping `off` to the string `'off'` made every
+ * Default selection send `reasoning_effort: "off"` — an upstream error, not a
+ * "thinking disabled" instruction. Leaving `off` as `null` is what makes Default
+ * work: no effort is sent and the model applies its own default.
+ *
+ * A model whose declared set never includes a level maps it to `null`, so the
+ * control hides it. `minimal` is not in the upstream vocabulary at all.
  */
 export function reasoningFields(info: CodeBuddyModelInfo): { reasoning: boolean; thinkingLevelMap?: ThinkingLevelMap } {
   const reasoning = info.reasoning
@@ -185,7 +193,10 @@ export function reasoningFields(info: CodeBuddyModelInfo): { reasoning: boolean;
     ? STANDARD_EFFORTS
     : declared
   const map: Record<ModelThinkingLevel, string | null> = {
-    off: reasoning.canDisableThinking === true ? 'off' : null,
+    // Always null: "off" is expressed by omitting the field, never by a value.
+    // `canDisableThinking` describes what the model can do, not a wire token,
+    // and the upstream has no `off` spelling to send.
+    off: null,
     // `minimal` is not in the upstream effort vocabulary (EFFORT_VALUES), so
     // no declared set can ever contain it.
     minimal: null,

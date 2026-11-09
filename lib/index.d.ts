@@ -4,6 +4,29 @@ import { PiAiAdapter } from "@deepseek-ai/dsh-llm-pi-ai";
 import { Context } from "@deepseek-ai/cordis";
 import { SettingsNamespace } from "@deepseek-ai/dsh-settings";
 import { AttachmentStore } from "@deepseek-ai/dsh-attachment";
+//#region src/status-paths.d.ts
+/**
+ * One piece of the composer credit line.
+ *
+ * Declared here rather than imported from `index.ts` because this module is the
+ * wire contract the browser half reads: it must stay free of host-side imports
+ * (the client bundle would otherwise pull the whole provider in). `index.ts`
+ * derives its schema from this list, so the two cannot drift.
+ */
+declare const CODEBUDDY_DOCK_SEGMENTS: readonly ["credit", "provider", "model", "rate"];
+type CodeBuddyDockSegment = (typeof CODEBUDDY_DOCK_SEGMENTS)[number];
+/** Daily check-in outcome status, already mapped for display. */
+type CodeBuddyCheckInStatus = 'ok' | 'already' | 'failed';
+/**
+ * The daily check-in answer the card renders. `message` is upstream text
+ * (success confirmation, the "already" reason, or a failure detail) and is
+ * shown verbatim next to the localized status.
+ */
+interface CodeBuddyCheckInOutcome {
+  status: CodeBuddyCheckInStatus;
+  message: string;
+}
+//#endregion
 //#region src/client-identity.d.ts
 /**
  * CodeBuddy client identity: the headers the upstream uses to attribute a
@@ -100,19 +123,6 @@ declare function clientIdentityHeaders(identity: CodeBuddyClientIdentity): Recor
  * @returns the resolved identity.
  */
 declare function resolveClientIdentity(explicitPath?: string): Promise<CodeBuddyClientIdentity>;
-//#endregion
-//#region src/status-paths.d.ts
-/** Daily check-in outcome status, already mapped for display. */
-type CodeBuddyCheckInStatus = 'ok' | 'already' | 'failed';
-/**
- * The daily check-in answer the card renders. `message` is upstream text
- * (success confirmation, the "already" reason, or a failure detail) and is
- * shown verbatim next to the localized status.
- */
-interface CodeBuddyCheckInOutcome {
-  status: CodeBuddyCheckInStatus;
-  message: string;
-}
 //#endregion
 //#region src/upstream.d.ts
 /** CodeBuddy region selected by the credential's login domain. */
@@ -761,9 +771,22 @@ declare const inject: string[];
  * this constant directly.
  */
 declare const CODEBUDDY_SETTINGS_NS: SettingsNamespace;
+/**
+ * The composer line's segment names, owned by the wire contract module so the
+ * browser half and this schema read the same list.
+ */
+declare const DOCK_SEGMENTS: readonly ["credit", "provider", "model", "rate"];
+type DockSegment = CodeBuddyDockSegment;
+/**
+ * The segments a document that never set `dockSegments` renders.
+ *
+ * Provider is on because it is the only place the provider name appears;
+ * `credit` is the row's reason to exist. Model is off because the composer's
+ * picker already shows it.
+ */
+declare const DEFAULT_DOCK_SEGMENTS: DockSegment[];
 /** Plugin configuration. */
 interface Config {
-  /** Explicit CodeBuddy CLI auth-file path, overriding env and platform defaults. */
   authFile?: string;
   /**
    * Allowlist of CodeBuddy model ids the model pickers offer.
@@ -790,6 +813,22 @@ interface Config {
    * be turned off from the plugin's own settings card.
    */
   showDockOnOtherProviders?: boolean;
+  /**
+   * Which pieces the composer line shows, in a fixed render order.
+   *
+   * `provider` is the only segment that names where the model comes from, so it
+   * stays on by default: the composer's own picker shows the model but not its
+   * provider, and dropping it would leave a CodeBuddy model looking like any
+   * other. `model` repeats what that picker already shows, so it is off by
+   * default — that duplication is what pushed the host's session stats into
+   * ellipsis on a narrow dock. `credit` is the row's original purpose and
+   * `rate` only appears when the catalog knows the multiplier (a missing entry
+   * never renders a guessed figure).
+   *
+   * An empty array is honoured as "no segments": the row then renders nothing,
+   * which is a legitimate choice rather than a misconfiguration.
+   */
+  dockSegments?: DockSegment[];
 }
 /**
  * The plugin's configuration schema.
@@ -814,4 +853,4 @@ declare const Config: z<Config>;
  */
 declare function apply(ctx: Context, rawConfig: Config): void;
 //#endregion
-export { CODEBUDDY_AUTH_FILENAME, CODEBUDDY_AUTH_FILE_ENV, CODEBUDDY_HOST_HEARTBEAT_FILENAME, CODEBUDDY_IDE_NAME, CODEBUDDY_IDE_TYPE, CODEBUDDY_PROVIDER, CODEBUDDY_SETTINGS_NS, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, CODEBUDDY_UNKNOWN_VERSION, type CodeBuddyAdapter, type CodeBuddyAuthStatus, CodeBuddyCatalog, type CodeBuddyChatResult, type CodeBuddyClientIdentity, type CodeBuddyCredential, CodeBuddyCredentialStore, type CodeBuddyCreditAccount, type CodeBuddyCredits, type CodeBuddyEffort, type CodeBuddyHostHeartbeat, type CodeBuddyModelBilling, type CodeBuddyModelInfo, type CodeBuddyModelReasoning, type CodeBuddyRefreshOutcome, type CodeBuddyShim, CodeBuddyUpstreamClient, type CodeBuddyUpstreamModel, type CodeBuddyUsageDaily, type CodeBuddyUsageRow, type CodeBuddyUsageStats, Config, FALLBACK_CODEBUDDY_MODELS, type UpstreamErrorKind, apply, classifyUpstreamError, clearHostHeartbeat, clientIdentityHeaders, codebuddyHostHeartbeatPath, codebuddyOwnAuthPath, createCodeBuddyAdapter, createCodeBuddyShim, defaultAuthDir, defaultAuthDirCandidates, filterEnabledModels, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseCodeBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf, resolveClientIdentity, resolveCodeBuddyCliVersion, userAgentFor };
+export { CODEBUDDY_AUTH_FILENAME, CODEBUDDY_AUTH_FILE_ENV, CODEBUDDY_HOST_HEARTBEAT_FILENAME, CODEBUDDY_IDE_NAME, CODEBUDDY_IDE_TYPE, CODEBUDDY_PROVIDER, CODEBUDDY_SETTINGS_NS, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, CODEBUDDY_UNKNOWN_VERSION, type CodeBuddyAdapter, type CodeBuddyAuthStatus, CodeBuddyCatalog, type CodeBuddyChatResult, type CodeBuddyClientIdentity, type CodeBuddyCredential, CodeBuddyCredentialStore, type CodeBuddyCreditAccount, type CodeBuddyCredits, type CodeBuddyEffort, type CodeBuddyHostHeartbeat, type CodeBuddyModelBilling, type CodeBuddyModelInfo, type CodeBuddyModelReasoning, type CodeBuddyRefreshOutcome, type CodeBuddyShim, CodeBuddyUpstreamClient, type CodeBuddyUpstreamModel, type CodeBuddyUsageDaily, type CodeBuddyUsageRow, type CodeBuddyUsageStats, Config, DEFAULT_DOCK_SEGMENTS, DOCK_SEGMENTS, DockSegment, FALLBACK_CODEBUDDY_MODELS, type UpstreamErrorKind, apply, classifyUpstreamError, clearHostHeartbeat, clientIdentityHeaders, codebuddyHostHeartbeatPath, codebuddyOwnAuthPath, createCodeBuddyAdapter, createCodeBuddyShim, defaultAuthDir, defaultAuthDirCandidates, filterEnabledModels, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseCodeBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf, resolveClientIdentity, resolveCodeBuddyCliVersion, userAgentFor };

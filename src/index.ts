@@ -20,6 +20,8 @@ import { AccountStore } from './account-store.ts'
 import { startOAuthLogin, pollOAuthLogin } from './oauth.ts'
 import { ensureClientIdentity } from './upstream.ts'
 import { installSettingsSectionCompat, resolveSettingsNamespaceCompat } from './settings-compat.ts'
+import { CODEBUDDY_DOCK_SEGMENTS } from './status-paths.ts'
+import type { CodeBuddyDockSegment } from './status-paths.ts'
 
 export { CODEBUDDY_PROVIDER, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, createCodeBuddyAdapter, type CodeBuddyAdapter } from './adapter.ts'
 export { createCodeBuddyShim, type CodeBuddyShim } from './shim.ts'
@@ -115,9 +117,24 @@ function settingsCompatNamespace(ctx: Context): SettingsNamespace {
   return resolveSettingsNamespaceCompat(ctx, CODEBUDDY_SETTINGS_NS)
 }
 
+/**
+ * The composer line's segment names, owned by the wire contract module so the
+ * browser half and this schema read the same list.
+ */
+export const DOCK_SEGMENTS = CODEBUDDY_DOCK_SEGMENTS
+export type DockSegment = CodeBuddyDockSegment
+
+/**
+ * The segments a document that never set `dockSegments` renders.
+ *
+ * Provider is on because it is the only place the provider name appears;
+ * `credit` is the row's reason to exist. Model is off because the composer's
+ * picker already shows it.
+ */
+export const DEFAULT_DOCK_SEGMENTS: DockSegment[] = ['credit', 'provider']
+
 /** Plugin configuration. */
-export interface Config {
-  /** Explicit CodeBuddy CLI auth-file path, overriding env and platform defaults. */
+export interface Config {  /** Explicit CodeBuddy CLI auth-file path, overriding env and platform defaults. */
   authFile?: string
   /**
    * Allowlist of CodeBuddy model ids the model pickers offer.
@@ -144,6 +161,22 @@ export interface Config {
    * be turned off from the plugin's own settings card.
    */
   showDockOnOtherProviders?: boolean
+  /**
+   * Which pieces the composer line shows, in a fixed render order.
+   *
+   * `provider` is the only segment that names where the model comes from, so it
+   * stays on by default: the composer's own picker shows the model but not its
+   * provider, and dropping it would leave a CodeBuddy model looking like any
+   * other. `model` repeats what that picker already shows, so it is off by
+   * default — that duplication is what pushed the host's session stats into
+   * ellipsis on a narrow dock. `credit` is the row's original purpose and
+   * `rate` only appears when the catalog knows the multiplier (a missing entry
+   * never renders a guessed figure).
+   *
+   * An empty array is honoured as "no segments": the row then renders nothing,
+   * which is a legitimate choice rather than a misconfiguration.
+   */
+  dockSegments?: DockSegment[]
 }
 
 /**
@@ -194,6 +227,10 @@ export const Config: z<Config> = z.object({
   showDockOnOtherProviders: z.boolean()
     .description('Keep the composer credit line visible while another provider (not CodeBuddy) is selected')
     .default(true)
+    .volatile(),
+  dockSegments: z.array(z.union(DOCK_SEGMENTS.map((segment) => z.const(segment))))
+    .description('Pieces shown in the composer credit line, in render order (default: credit + provider)')
+    .default(DEFAULT_DOCK_SEGMENTS)
     .volatile(),
 }) as unknown as z<Config>
 
@@ -261,6 +298,27 @@ export function apply(ctx: Context, rawConfig: Config): void {
     return true
   }
 
+  /**
+   * Which pieces the composer line renders.
+   *
+   * Absent means "the schema default" (`credit` + `provider`), which is what a
+   * document written before this option existed should look like — not an empty
+   * row. A stored empty array is returned as-is: that is a deliberate "show
+   * nothing", and collapsing it to the default would silently override a choice
+   * the operator made.
+   */
+  const dockSegments = (): readonly DockSegment[] | undefined => current().dockSegments
+
+  const setDockSegments = async (value: readonly DockSegment[]): Promise<boolean> => {
+    const settings = ctx.get('settings')
+    if (settings === undefined) return false
+    // Persist in render order regardless of the order the caller ticked them, so
+    // the stored document and the rendered line cannot disagree.
+    const ordered = DOCK_SEGMENTS.filter(segment => value.includes(segment))
+    await settings.update(settingsCompatNamespace(ctx), { dockSegments: ordered })
+    return true
+  }
+
   // Same-origin status route backing the Plugin-configuration card; the
   // webServer service is optional (a headless profile serves no browser).
   ctx.inject(['webServer'], webCtx => registerCodeBuddyStatusRoute(webCtx, {
@@ -271,6 +329,8 @@ export function apply(ctx: Context, rawConfig: Config): void {
     setEnabledModels,
     showDockOnOtherProviders,
     setShowDockOnOtherProviders,
+    dockSegments,
+    setDockSegments,
     settingsWritable: () => ctx.get('settings') !== undefined,
     checkIn: credential => client.checkIn(credential),
     refreshToken: credential => client.refreshToken(credential),

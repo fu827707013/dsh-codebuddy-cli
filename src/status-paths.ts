@@ -25,6 +25,17 @@ export const CODEBUDDY_MODELS_PATH = '/plugins/dsh-codebuddy-cli/enabled-models'
 export const CODEBUDDY_DOCK_PREFERENCE_PATH = '/plugins/dsh-codebuddy-cli/dock-preference'
 
 /**
+ * One piece of the composer credit line.
+ *
+ * Declared here rather than imported from `index.ts` because this module is the
+ * wire contract the browser half reads: it must stay free of host-side imports
+ * (the client bundle would otherwise pull the whole provider in). `index.ts`
+ * derives its schema from this list, so the two cannot drift.
+ */
+export const CODEBUDDY_DOCK_SEGMENTS = ['credit', 'provider', 'model', 'rate'] as const
+export type CodeBuddyDockSegment = (typeof CODEBUDDY_DOCK_SEGMENTS)[number]
+
+/**
  * Plugin-owned daily check-in endpoint.
  *
  * The card's check-in button POSTs here; the host half forwards the request
@@ -362,6 +373,13 @@ export type CodeBuddyWebStatus =
     showDockOnOtherProviders?: boolean
     /** Whether the Host can persist `showDockOnOtherProviders`. */
     showDockOnOtherProvidersWritable?: boolean
+    /**
+     * Which pieces the composer line renders. Absent on a Host that predates
+     * the option; the client then uses the same default the schema declares.
+     */
+    dockSegments?: readonly CodeBuddyDockSegment[]
+    /** Whether the Host can persist `dockSegments`. */
+    dockSegmentsWritable?: boolean
   }
   | {
     status: 'signed-in'
@@ -383,5 +401,9 @@ export type CodeBuddyWebStatus =
     showDockOnOtherProviders?: boolean
     /** See the signed-out variant: whether that preference can be saved. */
     showDockOnOtherProvidersWritable?: boolean
+    /** See the signed-out variant: the composer line's segment choice. */
+    dockSegments?: readonly CodeBuddyDockSegment[]
+    /** See the signed-out variant: whether the segment choice can be saved. */
+    dockSegmentsWritable?: boolean
     }
   | { status: 'error'; message: string }

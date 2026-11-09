@@ -66,13 +66,16 @@ describe('reasoningFields', () => {
   })
 
   it('offers exactly the declared set when the row declares one', () => {
+    // No `off`: CodeBuddy has no wire spelling for "thinking off" (its ladder is
+    // low…max), so the control must not offer a level it cannot transmit.
+    // Leaving `off` unset is what makes the UI's Default option work.
     expect(offeredEfforts({
       supports: true,
       onlyReasoning: true,
       supportedEfforts: ['low', 'high', 'max'],
       defaultEffort: 'high',
       canDisableThinking: true,
-    })).toEqual(['high', 'low', 'max', 'off'])
+    })).toEqual(['high', 'low', 'max'])
   })
 
   it('falls back to the standard ladder for an empty declared set', () => {
@@ -84,7 +87,12 @@ describe('reasoningFields', () => {
     })).toEqual(['high', 'low', 'max', 'medium', 'xhigh'])
   })
 
-  it('offers off only when the model reports thinking can be disabled', () => {
+  it('never offers off, which has no upstream wire spelling', () => {
+    // Regression guard for the Default-selection failure: `off` used to map to
+    // the string 'off' whenever `canDisableThinking` was true, and pi-ai sends a
+    // map string verbatim — so choosing Default put `reasoning_effort: "off"` on
+    // the wire, which CodeBuddy rejects with code 11150 and the turn fails.
+    // `canDisableThinking` must not change the ladder.
     expect(offeredEfforts({
       supports: true,
       onlyReasoning: true,
@@ -97,7 +105,15 @@ describe('reasoningFields', () => {
       onlyReasoning: true,
       supportedEfforts: ['high'],
       canDisableThinking: true,
-    })).toEqual(['high', 'off'])
+    })).toEqual(['high'])
+
+    // And the `off` slot itself is always null, never a string.
+    expect(reasoningFields(entry({
+      supports: true,
+      onlyReasoning: true,
+      supportedEfforts: ['low', 'high'],
+      canDisableThinking: true,
+    })).thinkingLevelMap).toMatchObject({ off: null })
   })
 
   it('never offers minimal, which is outside the upstream vocabulary', () => {

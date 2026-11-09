@@ -5,5 +5,7 @@ coverage/
 AGENTS.md
 docs/verification/session-cookie.txt
 docs/verification/_probe.cjs
+# Local UI drafts: kept on disk for reference, never part of the shipped plugin.
+docs/daily-budget-ui-draft.html
 
 *.tgz
