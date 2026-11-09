@@ -39,6 +39,15 @@ maybe('built client bundle slot + icon contract', () => {
     expect(bundle).not.toContain('settings.plugin.item')
   })
 
+  it('registers the sidebar row and its main panel (#17)', () => {
+    // The Plugins-page and settings-tab routes both hang off slots whose
+    // declaring package a third-party bundle can disable — on such a deployment
+    // the card is unreachable and nothing reports why. `sidebar.panellist` and
+    // `main` are declared by host modules, so this pair is the route that holds.
+    expect(bundle).toContain('sidebar.panellist')
+    expect(bundle).toContain('dsh-codebuddy-panel')
+  })
+
   it('labels the tab, so the strip never shows an unlabelled blank tab', () => {
     // The slot contract documents `label` as the registrant-localized tab text.
     // It resolves the short `tabLabel` key (the tab shares a row with the

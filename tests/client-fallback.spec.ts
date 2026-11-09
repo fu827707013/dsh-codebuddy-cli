@@ -56,6 +56,13 @@ describe('client card fallback', () => {
       attempt('composer dock', () => ctx.slots.inject('conversation.composer.dock', () => {}))
       attempt('bundle configuration page', () => ctx.slots.inject('plugins.bundle.config', () => {}))
       attempt('row configuration page', () => ctx.slots.inject('plugins.row.config', () => {}))
+      // The sidebar row + `main` panel pair (#17): the route that survives a
+      // deployment disabling `ui-settings-plugins`. Mirrored here so a change to
+      // the guarded body cannot silently diverge from the real entry.
+      attempt('sidebar panel', () => {
+        ctx.slots.inject('main', () => {})
+        ctx.slots.inject('sidebar.panellist', () => {})
+      })
       void t
     }
 
@@ -67,11 +74,15 @@ describe('client card fallback', () => {
     expect(String(errors[0])).toContain('bundle configuration page failed to register')
     expect(String(errors[0])).toContain('requires options.key')
 
-    // Crucially, the surfaces after the failing one still registered.
+    // Crucially, the surfaces after the failing one still registered — including
+    // the sidebar pair, which is what makes the card reachable at all on a host
+    // whose Plugins-page slot is never declared.
     expect(registered).toEqual([
       'settings.plugins.tab',
       'conversation.composer.dock',
       'plugins.row.config',
+      'main',
+      'sidebar.panellist',
     ])
 
     spy.mockRestore()

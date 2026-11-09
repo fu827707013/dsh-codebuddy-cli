@@ -21,10 +21,17 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 // `plugins.row.config`) are declared by the plugin-manager's SlotMap merge, so
 // contributors can type their registrations without importing the package.
 import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
+// Type-only: declares `sidebar.panellist` (the row) — the route that survives a
+// deployment disabling `ui-settings-plugins` (issue #17).
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+// Type-only: declares `main`, the keyed panel slot the sidebar row selects.
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import { CodeBuddyPluginCard } from './CodeBuddyPluginCard.tsx'
 import type { CodeBuddyPluginCardInjected } from './CodeBuddyPluginCard.tsx'
 import { CodeBuddyConfigPage } from './CodeBuddyConfigPage.tsx'
 import type { CodeBuddyConfigPageInjected } from './CodeBuddyConfigPage.tsx'
+import { CodeBuddyPanel, CodeBuddyPanelGlyph } from './CodeBuddyPanel.tsx'
+import type { CodeBuddyPanelInjected } from './CodeBuddyPanel.tsx'
 import { CodeBuddyCreditDock } from './CodeBuddyCreditDock.tsx'
 import type { CodeBuddyCreditDockInjected } from './CodeBuddyCreditDock.tsx'
 import { en, zh } from './locales.ts'
@@ -39,6 +46,15 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 /** Stable browser-plugin name. */
 export const name = 'dsh-codebuddy-cli-client'
+
+/**
+ * The sidebar row id and its `main` panel key.
+ *
+ * One value for both: `ui-sidebar` calls `layout.selectPanel(id)` with the row's
+ * `id`, and the layout renders the `main` entry whose `key` matches it. Keeping
+ * them as a single constant is what stops the pair drifting into a dead row.
+ */
+const SIDEBAR_PANEL_ID = 'dsh-codebuddy-cli'
 /**
  * Client services required by these contributions.
  *
@@ -152,5 +168,32 @@ export function apply(ctx: ClientContext): void {
       locale: namespace,
       inject: (): CodeBuddyConfigPageInjected => ({ t }),
     }, CodeBuddyConfigPage))
+  })
+
+  // Sidebar row + its `main` panel (#17). This pair is the route that survives a
+  // deployment disabling `ui-settings-plugins`: `sidebar.panellist` is declared by
+  // `ui-sidebar` and `main` by `ui-layout`, both host modules. The two are
+  // registered together because a sidebar row with no panel behind it would be a
+  // dead control, and a panel with no row would be unreachable — the host matches
+  // them by id (`selectPanel(SIDEBAR_PANEL_ID)` reads the `main` entry whose
+  // `key` equals it).
+  attempt('sidebar panel', () => {
+    ctx.slots.inject('main', () => ctx.slots.register({
+      name: 'main',
+      key: SIDEBAR_PANEL_ID,
+      locale: namespace,
+      inject: (): CodeBuddyPanelInjected => ({ t }),
+    }, CodeBuddyPanel))
+
+    ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+      name: 'sidebar.panellist',
+      id: SIDEBAR_PANEL_ID,
+      // After the host's own rows, before the "more" launcher's neighbours.
+      order: 10,
+      label: () => t('tabLabel'),
+      locale: namespace,
+      // The glyph slot receives `{ size, active }`; the row renders this inside an
+      // aria-hidden span and supplies its own accessible name from `label`.
+    }, CodeBuddyPanelGlyph))
   })
 }
