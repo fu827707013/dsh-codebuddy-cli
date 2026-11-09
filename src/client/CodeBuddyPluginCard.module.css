@@ -953,3 +953,61 @@
   font-weight: 500;
   color: var(--dsw-alias-label-primary);
 }
+
+/* ---- Sidebar `main` panel (#17) -------------------------------------------
+ * The host renders a keyed `main` entry with no chrome of its own, so the panel
+ * supplies its own masthead. Values follow the card's own header so the page
+ * reads as the same surface, only wider.
+ */
+.panel {
+  height: 100%;
+  overflow: auto;
+  padding: 16px 24px 32px;
+  box-sizing: border-box;
+}
+
+.panelMasthead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--dsw-alias-divider);
+}
+
+.panelBack {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 4px;
+  margin-left: -4px;
+  border-radius: 8px;
+  flex: none;
+}
+
+.panelBack:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-secondary);
+}
+
+.panelBack:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

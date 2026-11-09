@@ -12,30 +12,52 @@
  * reason to disable, so this route survives.
  *
  * Clicking the sidebar row is handled by the HOST (`ui-sidebar` calls
- * `layout.selectPanel(id)` itself), so this file only has to render the panel.
+ * `layout.selectPanel(id)` itself). Getting back out is NOT: the host's
+ * `MainPanel` renders the slot with no chrome at all, so a panel that does not
+ * draw its own way back strands the user on a page with no exit. `ui-layout`
+ * keeps the conversation at the null panel id, so leaving is
+ * `layout.selectPanel(null)`.
  */
 
 import { CodeBuddyConfigBody } from './CodeBuddyPluginCard.tsx'
 import type { CodeBuddyPluginCardInjected } from './CodeBuddyPluginCard.tsx'
+import css from './CodeBuddyPluginCard.module.css'
 
 /** Injected face of the `main` panel entry registered in `index.tsx`. */
 export interface CodeBuddyPanelInjected {
   t: CodeBuddyPluginCardInjected['t']
+  /** Return to the conversation view (`layout.selectPanel(null)`). */
+  close: () => void
 }
 
 /**
  * The panel body.
  *
  * `selectPanel` renders exactly one keyed `main` entry at a time, so this is a
- * page rather than a collapsible card: the body mounts expanded and the page
- * supplies its own heading, because the sidebar row's label is only visible
- * while the sidebar is wide.
+ * page rather than a collapsible card. The masthead carries the title and the
+ * way back, because the sidebar row's own label is only visible while the
+ * sidebar is wide.
  */
-export function CodeBuddyPanel({ t }: Partial<CodeBuddyPanelInjected>) {
+export function CodeBuddyPanel({ t, close }: Partial<CodeBuddyPanelInjected>) {
   if (t === undefined) throw new Error('CodeBuddy panel requires its translation function')
   return (
-    <div className="dsh-codebuddy-panel">
-      <h2 className="dsh-codebuddy-panel-title">{t('title')}</h2>
+    <div className={css.panel}>
+      <div className={css.panelMasthead}>
+        {close === undefined ? null : (
+          <button
+            type="button"
+            className={css.panelBack}
+            onClick={close}
+            aria-label={t('backToConversation')}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+              <path d="M10 3.5 5.5 8l4.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span>{t('backToConversation')}</span>
+          </button>
+        )}
+        <h2 className={css.panelTitle}>{t('title')}</h2>
+      </div>
       <CodeBuddyConfigBody t={t} />
     </div>
   )

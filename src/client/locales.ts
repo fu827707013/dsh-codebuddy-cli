@@ -5,6 +5,7 @@ export const en = {
   // The settings tab strip shares a row with the host's own tabs, so the tab
   // gets a short label while the card keeps the full product name.
   tabLabel: 'CodeBuddy CLI',
+    backToConversation: 'Back to chat',
   intro: 'Use the models included in the CodeBuddy CLI directly in DSH — zero configuration, ready out of the box.',
   expand: 'Expand',
   collapse: 'Collapse',
@@ -209,6 +210,7 @@ export const zh: Record<CodeBuddySettingsKey, string> = {
   title: 'DSH CodeBuddy CLI Connect',
   // 设置页的标签栏与宿主自带的标签同排，故标签取短名，卡片标题保留完整产品名。
   tabLabel: 'CodeBuddy CLI',
+    backToConversation: '返回会话',
   intro: '在 DSH 中直接使用 CodeBuddy CLI 包含的模型，开箱即用，无需额外配置。',
   expand: '展开',
   collapse: '收起',

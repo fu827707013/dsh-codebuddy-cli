@@ -45,7 +45,10 @@ maybe('built client bundle slot + icon contract', () => {
     // the card is unreachable and nothing reports why. `sidebar.panellist` and
     // `main` are declared by host modules, so this pair is the route that holds.
     expect(bundle).toContain('sidebar.panellist')
-    expect(bundle).toContain('dsh-codebuddy-panel')
+    // The panel must also draw its own way back: the host renders a `main`
+    // entry with no chrome, so a panel without this strands the user.
+    expect(bundle).toContain('selectPanel(null)')
+    expect(bundle).toMatch(/backToConversation/)
   })
 
   it('labels the tab, so the strip never shows an unlabelled blank tab', () => {

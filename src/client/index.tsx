@@ -73,8 +73,16 @@ const SIDEBAR_PANEL_ID = 'dsh-codebuddy-cli'
  * resolve — the symptom is a bare `client ✗` from a package reload while the
  * host provider keeps working. `plugins.bundle.config` / `plugins.row.config`
  * are declared by `@deepseek-ai/dsh-client-ui-plugin-manager`.
+ *
+ * `layout` is a SERVICE, not a slot declarer, and the two lists are independent:
+ * `dsh.client.inject` orders package loading, while this list decides which
+ * services cordis injects into `ctx`. Without `layout` here `ctx.layout` is
+ * `undefined`, so the panel's Back control threw on every click while React's
+ * production build swallowed the error — a button that looked wired and did
+ * nothing. `dsh-mnemon`, which implements the same sidebar-panel pattern,
+ * injects `layout` for exactly this reason.
  */
-export const inject = ['slots', 'locale']
+export const inject = ['slots', 'locale', 'layout']
 
 /**
  * Register card copy and every browser surface this plugin contributes.
@@ -182,7 +190,13 @@ export function apply(ctx: ClientContext): void {
       name: 'main',
       key: SIDEBAR_PANEL_ID,
       locale: namespace,
-      inject: (): CodeBuddyPanelInjected => ({ t }),
+      inject: (): CodeBuddyPanelInjected => ({
+        t,
+        // The host's `MainPanel` renders this slot with no chrome, so the panel
+        // has to draw its own way back. `ui-layout` keeps the conversation on the
+        // null panel id, which is what `ui-sidebar` itself uses to deselect.
+        close: () => { ctx.layout.selectPanel(null) },
+      }),
     }, CodeBuddyPanel))
 
     ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
