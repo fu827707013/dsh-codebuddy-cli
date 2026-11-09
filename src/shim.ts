@@ -21,7 +21,7 @@ import { Readable } from 'node:stream'
 import type { CodeBuddyCredentialStore } from './auth.ts'
 import type { CodeBuddyCatalog } from './catalog.ts'
 import { hostIsLoopback, originIsLoopback } from './loopback.ts'
-import { prepareChatBody, CodeBuddyUpstreamClient, type UpstreamErrorKind } from './upstream.ts'
+import { prepareChatBody, inlineRemoteImages, CodeBuddyUpstreamClient, type UpstreamErrorKind } from './upstream.ts'
 
 /** Minimal logger surface the plugin context already provides. */
 export interface ShimLogger {
@@ -211,7 +211,11 @@ export function createCodeBuddyShim(options: CodeBuddyShimOptions): CodeBuddyShi
     }
 
     const raw = (await readBody(req)).toString('utf8')
-    const prepared = prepareChatBody(raw)
+    // Two passes, in this order: the sync normalizers run first so a malformed
+    // block never reaches the fetch, then remote images are inlined. Inlining is
+    // async (it fetches) and therefore cannot live inside prepareChatBody.
+    const normalized = prepareChatBody(raw)
+    const prepared = await inlineRemoteImages(normalized, fetch)
 
     const controller = new AbortController()
     req.on('close', () => controller.abort())

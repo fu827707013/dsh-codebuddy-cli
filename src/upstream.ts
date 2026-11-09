@@ -558,10 +558,88 @@ export function prepareChatBody(source: string): string {
   const obj = body as Record<string, unknown>
   obj['stream'] = true
   normalizeDeveloperRole(obj)
+  normalizeMessageContent(obj)
   neutralizeHarnessFingerprints(obj)
   normalizeToolChoice(obj)
   normalizeReasoningEffort(obj)
   return JSON.stringify(obj)
+}
+
+/**
+ * Content block types the upstream understands.
+ *
+ * Everything else is either dropped or flattened to text — see
+ * {@link normalizeMessageContent}. Kept as a set so the check reads as one
+ * vocabulary rather than a chain of negations.
+ */
+const SUPPORTED_CONTENT_TYPES: ReadonlySet<string> = new Set(['text', 'image_url'])
+
+/**
+ * Rewrite message content into the block vocabulary the upstream accepts.
+ *
+ * The upstream parses `content` strictly and fails the whole turn on a block it
+ * does not know, with a message that names the offending type:
+ *
+ * - `400 code 11101 unsupported content type at index 0: tool-addition`
+ *
+ * Two producers create such blocks in normal use:
+ *
+ * 1. **Tool-registry notices (#13).** After the tool registry changes mid
+ *    session, DSH inserts a `role: "developer"` message whose content is
+ *    `[{ type: 'tool-addition', toolName: 'x' }]`. {@link normalizeDeveloperRole}
+ *    only fixes the role, so the block itself reached upstream and failed every
+ *    turn after a `dsh plugin add/remove`. Flattened to text rather than dropped:
+ *    the model should still learn that the tool set changed.
+ * 2. **Any future block type.** A host or pi-ai upgrade that introduces a new
+ *    content kind must degrade to "the model sees a note", not to a dead
+ *    channel. Unknown blocks therefore flatten the same way instead of passing
+ *    through, which is the difference between a stale plugin and a broken one.
+ *
+ * A message whose content flattens to nothing is left with an empty string, not
+ * deleted: dropping a message from the middle of a tool-call sequence breaks the
+ * pairing the upstream validates.
+ */
+function normalizeMessageContent(obj: Record<string, unknown>): void {
+  const messages = obj['messages']
+  if (!Array.isArray(messages)) return
+  for (const message of messages) {
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
+    const wrapped = message as Record<string, unknown>
+    const content = wrapped['content']
+    if (!Array.isArray(content)) continue
+    const rewritten: unknown[] = []
+    for (const block of content) {
+      if (typeof block !== 'object' || block === null || Array.isArray(block)) {
+        rewritten.push(block)
+        continue
+      }
+      const typed = block as Record<string, unknown>
+      const type = typeof typed['type'] === 'string' ? typed['type'] : ''
+      if (SUPPORTED_CONTENT_TYPES.has(type)) {
+        rewritten.push(block)
+        continue
+      }
+      const note = contentBlockNote(typed, type)
+      if (note !== '') rewritten.push({ type: 'text', text: note })
+    }
+    wrapped['content'] = rewritten
+  }
+}
+
+/**
+ * The text that replaces an unsupported content block.
+ *
+ * Deliberately factual and short: the model only needs to know what was there.
+ * A `tool-addition` names its tool, which is the one detail worth keeping; every
+ * other unknown type degrades to a bracketed type name so nothing is invented.
+ */
+function contentBlockNote(block: Record<string, unknown>, type: string): string {
+  if (type === 'tool-addition') {
+    const name = typeof block['toolName'] === 'string' ? block['toolName'].trim() : ''
+    return name !== '' ? `[tool added: ${name}]` : '[tool added]'
+  }
+  if (type === '') return ''
+  return `[unsupported content: ${type}]`
 }
 
 /**
@@ -737,6 +815,128 @@ function normalizeToolChoice(obj: Record<string, unknown>): void {
     return
   }
   delete obj['tool_choice']
+}
+
+/**
+ * Inline `http(s)` image URLs into `data:` URLs, in place, before sending.
+ *
+ * The upstream accepts only `data:image/...;base64,` for image parts and answers
+ * `400 code 11133 Invalid request parameters` for a remote URL (#13). DSH
+ * produces exactly that shape for images captured earlier in a session — a
+ * `browser_screenshot` attachment becomes
+ * `{ type: 'image_url', image_url: { url: 'http://127.0.0.1:3080/...' } }` — so
+ * a session that switches provider mid-flight fails on its next turn even though
+ * nothing about the request is wrong.
+ *
+ * Asynchronous by necessity (it fetches), which is why it is separate from
+ * {@link prepareChatBody}: the caller awaits this one.
+ *
+ * A URL that cannot be inlined is replaced with a text note rather than left in
+ * place. Leaving it would reproduce the upstream's opaque 400; dropping it
+ * silently would lose the fact that an image was there. The note names the
+ * reason so the model — and the user reading the transcript — can tell "this
+ * image was unreachable" from "there was no image".
+ *
+ * Only `http(s)` is fetched. `data:` and anything else is left untouched: the
+ * former is already inline, and fetching a `file:` or `blob:` URL from here
+ * would be a local-file read this layer has no business performing.
+ */
+export async function inlineRemoteImages(
+  body: string,
+  fetchImpl: typeof fetch,
+  options: { readonly timeoutMs?: number; readonly maxBytes?: number } = {},
+): Promise<string> {
+  const timeoutMs = options.timeoutMs ?? 10_000
+  const maxBytes = options.maxBytes ?? 8 * 1024 * 1024
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return body
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return body
+  const messages = (parsed as Record<string, unknown>)['messages']
+  if (!Array.isArray(messages)) return body
+
+  // Collect first, then fetch: a body with no remote image must not pay for a
+  // single network call, which is the overwhelmingly common case.
+  const targets: { block: Record<string, unknown>; url: string }[] = []
+  for (const message of messages) {
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
+    const content = (message as Record<string, unknown>)['content']
+    if (!Array.isArray(content)) continue
+    for (const block of content) {
+      if (typeof block !== 'object' || block === null || Array.isArray(block)) continue
+      const typed = block as Record<string, unknown>
+      if (typed['type'] !== 'image_url') continue
+      const imageUrl = typed['image_url']
+      if (typeof imageUrl !== 'object' || imageUrl === null) continue
+      const url = (imageUrl as Record<string, unknown>)['url']
+      if (typeof url === 'string' && /^https?:\/\//i.test(url)) targets.push({ block: typed, url })
+    }
+  }
+  if (targets.length === 0) return body
+
+  await Promise.all(targets.map(async ({ block, url }) => {
+    const inlined = await fetchAsDataUrl(url, fetchImpl, timeoutMs, maxBytes)
+    if (inlined.ok) {
+      block['image_url'] = { url: inlined.dataUrl }
+      return
+    }
+    // Replace the whole block: an `image_url` part whose url is not an image is
+    // still a parse error upstream.
+    block['type'] = 'text'
+    block['text'] = `[image unavailable: ${inlined.reason}]`
+    delete block['image_url']
+  }))
+  return JSON.stringify(parsed)
+}
+
+/** Fetch one URL and encode it as a `data:` URL, or explain why it cannot be. */
+async function fetchAsDataUrl(
+  url: string,
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+  maxBytes: number,
+): Promise<{ ok: true; dataUrl: string } | { ok: false; reason: string }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => { controller.abort() }, timeoutMs)
+  try {
+    const response = await fetchImpl(url, { signal: controller.signal })
+    if (!response.ok) return { ok: false, reason: `http ${response.status}` }
+    const declared = Number(response.headers.get('content-length') ?? '')
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      return { ok: false, reason: `too large (${Math.round(declared / 1024)} KB)` }
+    }
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (bytes.byteLength > maxBytes) {
+      return { ok: false, reason: `too large (${Math.round(bytes.byteLength / 1024)} KB)` }
+    }
+    if (bytes.byteLength === 0) return { ok: false, reason: 'empty response' }
+    // Sniff from the magic bytes rather than trusting Content-Type: an attachment
+    // endpoint may serve octet-stream for a perfectly good PNG, and the upstream
+    // validates the data URL's media type.
+    const mime = sniffImageMime(bytes)
+    if (mime === undefined) return { ok: false, reason: 'not an image' }
+    return { ok: true, dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
+  } catch (error: unknown) {
+    const aborted = error instanceof Error && error.name === 'AbortError'
+    return { ok: false, reason: aborted ? 'timed out' : 'fetch failed' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Detect the image type from magic bytes, or `undefined` when it is not one. */
+function sniffImageMime(bytes: Buffer): string | undefined {
+  if (bytes.length >= 8
+    && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png'
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (bytes.length >= 6 && bytes.subarray(0, 3).toString('latin1') === 'GIF') return 'image/gif'
+  if (bytes.length >= 12
+    && bytes.subarray(0, 4).toString('latin1') === 'RIFF'
+    && bytes.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp'
+  return undefined
 }
 
 /** One JSON-envelope response from the upstream, already unwrapped. */

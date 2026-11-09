@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyUpstreamError, prepareChatBody, regionOf } from '../src/upstream.ts'
+import { classifyUpstreamError, inlineRemoteImages, prepareChatBody, regionOf } from '../src/upstream.ts'
 
 describe('prepareChatBody', () => {
   it('forces stream true', () => {
@@ -238,5 +238,117 @@ describe('regionOf', () => {
     expect(regionOf('workbuddy.ai')).toBe('global')
     expect(regionOf('US.WorkBuddy.AI')).toBe('global')
     expect(regionOf('')).toBe('cn')
+  })
+})
+
+describe('normalizeMessageContent (#13)', () => {
+  it('flattens a tool-addition block to text instead of forwarding it', () => {
+    // DSH inserts this after the tool registry changes mid-session. Forwarded
+    // verbatim it fails the whole turn with 11101 unsupported content type.
+    const body = JSON.parse(prepareChatBody(JSON.stringify({
+      messages: [{ role: 'developer', content: [{ type: 'tool-addition', toolName: 'browser_click' }] }],
+    })))
+    expect(body['messages'][0]['content']).toEqual([{ type: 'text', text: '[tool added: browser_click]' }])
+  })
+
+  it('keeps the note when a tool-addition names no tool', () => {
+    const body = JSON.parse(prepareChatBody(JSON.stringify({
+      messages: [{ role: 'system', content: [{ type: 'tool-addition' }] }],
+    })))
+    expect(body['messages'][0]['content']).toEqual([{ type: 'text', text: '[tool added]' }])
+  })
+
+  it('flattens any unknown block type rather than passing it through', () => {
+    // A host upgrade introducing a new content kind must degrade to a note, not
+    // to a dead channel.
+    const body = JSON.parse(prepareChatBody(JSON.stringify({
+      messages: [{ role: 'user', content: [{ type: 'video_clip', url: 'x' }] }],
+    })))
+    expect(body['messages'][0]['content']).toEqual([{ type: 'text', text: '[unsupported content: video_clip]' }])
+  })
+
+  it('leaves supported text and image_url blocks untouched', () => {
+    const content = [
+      { type: 'text', text: 'hello' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+    ]
+    const body = JSON.parse(prepareChatBody(JSON.stringify({
+      messages: [{ role: 'user', content }],
+    })))
+    expect(body['messages'][0]['content']).toEqual(content)
+  })
+
+  it('leaves string content alone', () => {
+    const body = JSON.parse(prepareChatBody(JSON.stringify({
+      messages: [{ role: 'user', content: 'plain' }],
+    })))
+    expect(body['messages'][0]['content']).toBe('plain')
+  })
+})
+
+describe('inlineRemoteImages (#13)', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02])
+  const okFetch = (bytes, type = 'image/png') => (async () => new Response(bytes, {
+    status: 200,
+    headers: { 'content-type': type },
+  })) as unknown as typeof fetch
+
+  it('inlines an http image URL as a data URL', async () => {
+    const body = JSON.stringify({
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'http://127.0.0.1:3080/a.png' } }] }],
+    })
+    const out = JSON.parse(await inlineRemoteImages(body, okFetch(png)))
+    expect(out['messages'][0]['content'][0]['image_url']['url'])
+      .toBe('data:image/png;base64,' + png.toString('base64'))
+  })
+
+  it('sniffs the type from magic bytes, not the content-type header', async () => {
+    // An attachment endpoint may serve octet-stream for a good PNG.
+    const body = JSON.stringify({
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://x/a' } }] }],
+    })
+    const out = JSON.parse(await inlineRemoteImages(body, okFetch(png, 'application/octet-stream')))
+    expect(out['messages'][0]['content'][0]['image_url']['url']).toMatch(/^data:image\/png;base64,/)
+  })
+
+  it('replaces an unreachable image with a note instead of failing the turn', async () => {
+    const failing = (async () => new Response('', { status: 404 })) as unknown as typeof fetch
+    const body = JSON.stringify({
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'http://127.0.0.1:1/x.png' } }] }],
+    })
+    const out = JSON.parse(await inlineRemoteImages(body, failing))
+    const block = out['messages'][0]['content'][0]
+    expect(block['type']).toBe('text')
+    expect(block['text']).toContain('image unavailable')
+    expect(block['image_url']).toBeUndefined()
+  })
+
+  it('rejects a non-image payload rather than sending a bogus data URL', async () => {
+    const body = JSON.stringify({
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://x/a' } }] }],
+    })
+    const out = JSON.parse(await inlineRemoteImages(body, okFetch(Buffer.from('not an image'))))
+    expect(out['messages'][0]['content'][0]['text']).toContain('not an image')
+  })
+
+  it('does not fetch when there is no remote image', async () => {
+    let called = false
+    const spy = (async () => { called = true; return new Response(png) }) as unknown as typeof fetch
+    const body = JSON.stringify({
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } }] }],
+    })
+    await inlineRemoteImages(body, spy)
+    expect(called).toBe(false)
+  })
+
+  it('leaves data URLs and non-http schemes untouched', async () => {
+    const original = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } }
+    const body = JSON.stringify({ messages: [{ role: 'user', content: [original] }] })
+    const out = JSON.parse(await inlineRemoteImages(body, okFetch(png)))
+    expect(out['messages'][0]['content'][0]).toEqual(original)
+  })
+
+  it('returns invalid JSON untouched', async () => {
+    expect(await inlineRemoteImages('not json', okFetch(png))).toBe('not json')
   })
 })
