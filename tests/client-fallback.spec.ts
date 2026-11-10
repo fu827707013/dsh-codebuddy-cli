@@ -53,6 +53,10 @@ describe('client card fallback', () => {
       ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-codebuddy-cli: settings copy')
       const t = ctx.locale.bind(namespace)
       attempt('settings tab', () => ctx.slots.inject('settings.plugins.tab', () => {}))
+      // First-level settings nav row. Declared by the settings SHELL rather than
+      // by `ui-settings-plugins`, so it is the surface that still works when a
+      // bundle disables the plugins section (#14).
+      attempt('settings section', () => ctx.slots.inject('settings.section', () => {}))
       attempt('composer dock', () => ctx.slots.inject('conversation.composer.dock', () => {}))
       attempt('bundle configuration page', () => ctx.slots.inject('plugins.bundle.config', () => {}))
       attempt('row configuration page', () => ctx.slots.inject('plugins.row.config', () => {}))
@@ -79,6 +83,7 @@ describe('client card fallback', () => {
     // whose Plugins-page slot is never declared.
     expect(registered).toEqual([
       'settings.plugins.tab',
+      'settings.section',
       'conversation.composer.dock',
       'plugins.row.config',
       'main',

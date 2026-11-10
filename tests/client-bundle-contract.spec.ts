@@ -51,6 +51,34 @@ maybe('built client bundle slot + icon contract', () => {
     expect(bundle).toMatch(/backToConversation/)
   })
 
+  it('registers a first-level settings section, not only the plugins tab (#14)', () => {
+    // `settings.plugins.tab` is declared by `ui-settings-plugins`, which a
+    // third-party bundle can disable — on that deployment the callback never
+    // runs and the card is unreachable with nothing logged. `settings.section`
+    // is declared by the settings SHELL itself, so it survives.
+    expect(bundle).toContain('settings.section')
+    expect(bundle).toMatch(/id:\s*"codebuddy-cli"/)
+  })
+
+  it('sizes the dock row to its content so segments off actually free width (#14)', () => {
+    // The dock shares `conversation.composer.dock` with the host's stats strip.
+    // As a `width: 100%` block it ate the row regardless of how little it showed,
+    // so disabling segments reclaimed nothing and the stats stayed ellipsised.
+    //
+    // Assert on the dock's own style object, not on the whole bundle: the card
+    // and the panel legitimately use `width: '100%'` for their own layout, so a
+    // bundle-wide negative would fail for the wrong reason.
+    const dock = bundle.slice(
+      bundle.indexOf('const rootStyle'),
+      bundle.indexOf('const triggerStyle'),
+    )
+    expect(dock.length).toBeGreaterThan(0)
+    expect(dock).toContain('fit-content')
+    expect(dock).not.toContain(`width: "100%"`)
+    // `maxWidth` is a different property and legitimately stays as the cap.
+    expect(dock).toContain('maxWidth')
+  })
+
   it('labels the tab, so the strip never shows an unlabelled blank tab', () => {
     // The slot contract documents `label` as the registrant-localized tab text.
     // It resolves the short `tabLabel` key (the tab shares a row with the

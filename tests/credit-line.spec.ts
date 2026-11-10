@@ -172,7 +172,13 @@ describe('provider id sync', () => {
   it('CODEBUDDY_PROVIDER_ID matches the adapter route', async () => {
     const adapter = await import('../src/adapter.ts')
     expect(CODEBUDDY_PROVIDER_ID).toBe(adapter.CODEBUDDY_PROVIDER)
-  })
+    // The dynamic import above pulls the whole adapter module, which is slow
+    // enough that the default 5s per-test budget is occasionally exceeded when
+    // the suite runs with many workers. That produced a flaky failure with no
+    // assertion involved (observed twice, passing standalone both times).
+    // This is a module-load cost, not a correctness signal, so the budget is
+    // widened rather than the assertion weakened.
+  }, 20_000)
 })
 
 describe('buildDockLine', () => {

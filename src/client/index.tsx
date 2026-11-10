@@ -137,6 +137,28 @@ export function apply(ctx: ClientContext): void {
     }, CodeBuddyPluginCard))
   })
 
+  // Settings → <first-level nav row>. A `{ kind: 'list', scope: 'root' }` slot
+  // declared by `dsh-client-ui-settings-general` — the same host package that
+  // draws the settings shell, so unlike `settings.plugins.tab` (declared by
+  // `ui-settings-plugins`, which a third-party bundle can disable) this surface
+  // exists on every host that has settings at all. That difference is the whole
+  // reason this registration exists: on a deployment where `ui-settings-plugins`
+  // is off, the plugins tab is never declared and its callback never runs.
+  //
+  // `order: 50` sits after the host's own sections (account/general/models/
+  // plugins) and after `dsh-market` at 40; the list is sorted, so a collision
+  // would only affect ordering, never reachability.
+  attempt('settings section', () => {
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section',
+      id: 'codebuddy-cli',
+      order: 50,
+      label: () => t('tabLabel'),
+      locale: namespace,
+      inject: (): CodeBuddyPluginCardInjected => ({ t }),
+    }, CodeBuddyPluginCard))
+  })
+
   // The composer credit line rides the same locale namespace (its keys are a
   // subset) and the session-scoped `conversation.composer.dock` list slot — the
   // slot the host's own stats strip occupies, so the credit figure sits directly

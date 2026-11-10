@@ -61,10 +61,21 @@ const REFRESH_INTERVAL_MS = 60_000
 
 const rootStyle: CSSProperties = {
   position: 'relative',
+  // Shrink-to-fit, not `width: 100%`.
+  //
+  // This root shares the `conversation.composer.dock` flex row with the host's
+  // own conversation statistics. As a full-width block it consumed the whole
+  // row no matter how little it had to say, so the statistics were pushed into
+  // the same ellipsis whether one segment was enabled or three — turning
+  // segments off reclaimed nothing. `fit-content` makes the element measure what
+  // it actually renders, which is what hands the freed width back.
+  //
+  // `maxWidth` still caps it at the chat content width so a long credit line
+  // cannot stretch the row; `margin: 0 auto` keeps it centred while narrower.
   display: 'block',
+  width: 'fit-content',
   textAlign: 'center',
   maxWidth: 'var(--dsh-chat-content-width, 48rem)',
-  width: '100%',
   margin: '0 auto',
   boxSizing: 'border-box',
   padding: '2px calc(var(--dsh-composer-side-clearance, 0px) + 16px) 0px',
