@@ -83,8 +83,32 @@ const rootStyle: CSSProperties = {
   lineHeight: '18px',
   color: 'var(--dsw-alias-label-tertiary)',
   whiteSpace: 'nowrap',
+  // NO `overflow: hidden` here.
+  //
+  // It used to be, to clip the credit line to one line with an ellipsis. But
+  // this same element is the containing block for the detail panel, which is
+  // absolutely positioned ABOVE the row (`bottom: calc(100% + 8px)`). A clipping
+  // ancestor removes an overflowing descendant entirely, so the panel was laid
+  // out in full, found to be completely outside the clip box, and painted
+  // nowhere — clicking the credit line appeared to do nothing.
+  //
+  // The single-line ellipsis now lives on `lineStyle`, applied to the text
+  // itself. That is where the truncation belongs: the row still shows one
+  // clipped line, and the panel is free to escape upward.
+}
+/**
+ * One-line ellipsis for the credit text.
+ *
+ * Split out from {@link rootStyle} so the clipping applies to the text instead
+ * of to the panel's containing block. `minWidth: 0` lets it shrink inside the
+ * flex/block chain rather than forcing the row wider than its space.
+ */
+const lineStyle: CSSProperties = {
+  display: 'block',
+  minWidth: 0,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
 const triggerStyle: CSSProperties = {
   all: 'unset',
@@ -375,14 +399,14 @@ function CreditDockBody({ selection, codeBuddy, useSession, t }: {
   const panelAvailable = credits !== null
 
   if (!panelAvailable) {
-    return <div ref={rootRef} style={rootStyle}><span>{lineText}</span></div>
+    return <div ref={rootRef} style={rootStyle}><span style={lineStyle}>{lineText}</span></div>
   }
 
   return (
     <div ref={rootRef} style={rootStyle}>
       <button type="button" style={triggerStyle} aria-haspopup="dialog" aria-expanded={open}
         aria-label={t('creditPanelAria')} onClick={() => { setOpen(!open) }}>
-        {lineText}
+        <span style={lineStyle}>{lineText}</span>
       </button>
       {open
         ? (

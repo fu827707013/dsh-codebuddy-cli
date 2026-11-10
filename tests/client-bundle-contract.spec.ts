@@ -79,6 +79,36 @@ maybe('built client bundle slot + icon contract', () => {
     expect(dock).toContain('maxWidth')
   })
 
+  it('keeps the dock root unclipped so the credit panel can escape upward', () => {
+    // The credit panel is `position: absolute` with `bottom: calc(100% + 8px)` —
+    // it renders ABOVE the row, inside the root as its containing block. Any
+    // `overflow: hidden` on that root removes the whole panel: it is laid out
+    // fully outside the clip box and paints nowhere, so clicking the credit line
+    // looked like a dead control. Measured before the fix with a probe element:
+    // child.bottom 631 < host.top 639, i.e. entirely outside the clip.
+    //
+    // The one-line ellipsis therefore has to live on the text node, not on the
+    // padding box that also anchors the panel.
+    const dock = bundle.slice(
+      bundle.indexOf('const rootStyle'),
+      bundle.indexOf('const lineStyle'),
+    )
+    expect(dock.length).toBeGreaterThan(0)
+    expect(dock).not.toContain('overflow: "hidden"')
+    // The panel must still be anchored to this root, so `position: relative` stays.
+    expect(dock).toContain('position: "relative"')
+  })
+
+  it('applies the ellipsis to the credit text itself', () => {
+    const line = bundle.slice(
+      bundle.indexOf('const lineStyle'),
+      bundle.indexOf('const triggerStyle'),
+    )
+    expect(line).toContain('overflow: "hidden"')
+    expect(line).toContain('textOverflow: "ellipsis"')
+    expect(line).toContain('minWidth: 0')
+  })
+
   it('labels the tab, so the strip never shows an unlabelled blank tab', () => {
     // The slot contract documents `label` as the registrant-localized tab text.
     // It resolves the short `tabLabel` key (the tab shares a row with the
