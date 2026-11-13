@@ -19,7 +19,7 @@ import type { CodeBuddyCreditKey } from './locales.ts'
  * and this default stay in step.
  */
 type CodeBuddyDockSegmentName = (typeof CODEBUDDY_DOCK_SEGMENTS)[number]
-export const DEFAULT_DOCK_SEGMENTS: readonly CodeBuddyDockSegmentName[] = ['credit']
+export const DEFAULT_DOCK_SEGMENTS: readonly CodeBuddyDockSegmentName[] = ['credit', 'provider']
 
 /**
  * Display spelling of this plugin's provider.
