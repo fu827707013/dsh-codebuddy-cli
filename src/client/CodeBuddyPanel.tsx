@@ -2,8 +2,8 @@
  * Sidebar panel page: the CodeBuddy configuration rendered as a full `main`
  * panel rather than a settings dialog.
  *
- * Why this exists as a third entry point (issue #17): the Plugins-page card and
- * the `settings.plugins.tab` registration both depend on slots whose declaring
+ * Why this exists (issue #17): the Plugins-page card and the old
+ * `settings.plugins.tab` registration both depend on slots whose declaring
  * package can be disabled by a third-party bundle. On a deployment that turns
  * `ui-settings-plugins` off — a real, shipped configuration — neither slot is
  * ever declared, so `slots.inject` never runs its callback and the card is
@@ -37,6 +37,11 @@ export interface CodeBuddyPanelInjected {
  * page rather than a collapsible card. The masthead carries the title and the
  * way back, because the sidebar row's own label is only visible while the
  * sidebar is wide.
+ *
+ * The page is the SAME body every other surface renders — accounts / models /
+ * credit stats / remaining credit, plus the `入口` switches as a fifth tab of
+ * that one strip. It deliberately does not stack a second tab bar on top: the
+ * switches are one more page of the same card, not a separate navigation level.
  */
 export function CodeBuddyPanel({ t, close }: Partial<CodeBuddyPanelInjected>) {
   if (t === undefined) throw new Error('CodeBuddy panel requires its translation function')
@@ -58,6 +63,22 @@ export function CodeBuddyPanel({ t, close }: Partial<CodeBuddyPanelInjected>) {
         )}
         <h2 className={css.panelTitle}>{t('title')}</h2>
       </div>
+      <CodeBuddyConfigBody t={t} />
+    </div>
+  )
+}
+
+/**
+ * The settings-dialog page body.
+ *
+ * Same content as the sidebar panel minus the masthead: the settings shell draws
+ * its own title and close control around a `settings.section` entry, so adding a
+ * second back button there would duplicate the host's chrome.
+ */
+export function CodeBuddySettingsPage({ t }: Partial<CodeBuddyPanelInjected>) {
+  if (t === undefined) throw new Error('CodeBuddy settings page requires its translation function')
+  return (
+    <div className={css.panel}>
       <CodeBuddyConfigBody t={t} />
     </div>
   )

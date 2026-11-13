@@ -780,9 +780,15 @@ type DockSegment = CodeBuddyDockSegment;
 /**
  * The segments a document that never set `dockSegments` renders.
  *
- * Provider is on because it is the only place the provider name appears;
- * `credit` is the row's reason to exist. Model is off because the composer's
- * picker already shows it.
+ * Credit only. The row shares `conversation.composer.dock` with the host's own
+ * session-stats strip, so every extra segment squeezes the rounds/token figures
+ * toward ellipsis. Provider and model are both obtainable elsewhere — the
+ * composer's model picker sits directly under this row and shows the model, and
+ * the selected provider is what makes this row appear at all — so repeating them
+ * here spends the shared width on information the reader already has (#14).
+ *
+ * An operator who wants them back enables them in the card's dock settings;
+ * this constant only decides what an untouched install looks like.
  */
 declare const DEFAULT_DOCK_SEGMENTS: DockSegment[];
 /** Plugin configuration. */
@@ -829,6 +835,10 @@ interface Config {
    * which is a legitimate choice rather than a misconfiguration.
    */
   dockSegments?: DockSegment[];
+  /** Whether the main sidebar renders the CodeBuddy CLI row and its panel. */
+  showSidebarPanel?: boolean;
+  /** Whether the Plugins page shows the bundle/row configuration for this plugin. */
+  showPluginsConfig?: boolean;
 }
 /**
  * The plugin's configuration schema.

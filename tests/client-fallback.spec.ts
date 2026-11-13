@@ -52,10 +52,9 @@ describe('client card fallback', () => {
       const namespace = 'settings.codebuddy-cli'
       ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-codebuddy-cli: settings copy')
       const t = ctx.locale.bind(namespace)
-      attempt('settings tab', () => ctx.slots.inject('settings.plugins.tab', () => {}))
-      // First-level settings nav row. Declared by the settings SHELL rather than
-      // by `ui-settings-plugins`, so it is the surface that still works when a
-      // bundle disables the plugins section (#14).
+      // The switchable surfaces now register from a resolved read; this mirror
+      // calls them synchronously because the assertions below are about the
+      // guard, not about the promise.
       attempt('settings section', () => ctx.slots.inject('settings.section', () => {}))
       attempt('composer dock', () => ctx.slots.inject('conversation.composer.dock', () => {}))
       attempt('bundle configuration page', () => ctx.slots.inject('plugins.bundle.config', () => {}))
@@ -82,7 +81,6 @@ describe('client card fallback', () => {
     // the sidebar pair, which is what makes the card reachable at all on a host
     // whose Plugins-page slot is never declared.
     expect(registered).toEqual([
-      'settings.plugins.tab',
       'settings.section',
       'conversation.composer.dock',
       'plugins.row.config',

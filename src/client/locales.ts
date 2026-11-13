@@ -5,7 +5,19 @@ export const en = {
   // The settings tab strip shares a row with the host's own tabs, so the tab
   // gets a short label while the card keeps the full product name.
   tabLabel: 'CodeBuddy CLI',
-    backToConversation: 'Back to chat',
+  backToConversation: 'Back to chat',
+  entriesIntro: 'Choose which built-in entry points this plugin shows. Every switch is on by default.',
+  entriesLoading: 'Loading entry switches…',
+  entriesSidebar: 'Sidebar row',
+  entriesSidebarHint: 'A CodeBuddy CLI row in the main sidebar, opening this page.',
+  entriesSettings: 'Settings dialog row',
+  entriesSettingsHint: 'Always on — this is the entry that can switch the others back on.',
+  entriesLocked: 'Always on',
+  entriesPlugins: 'Plugins page configuration',
+  entriesPluginsHint: 'The configuration block inside this plugin card on the Plugins page.',
+  entriesSaved: 'Saved.',
+  entriesFailed: 'Could not save: ',
+  entriesReloadNote: 'Reload the page for a change to take effect — entries are registered at startup.',
   intro: 'Use the models included in the CodeBuddy CLI directly in DSH — zero configuration, ready out of the box.',
   expand: 'Expand',
   collapse: 'Collapse',
@@ -79,6 +91,7 @@ export const en = {
   tabModels: 'Available models',
   tabCreditStats: 'Credit statistics',
   tabRemaining: 'Remaining credit',
+  tabEntries: 'Entries',
   // —— Account cards (workbuddy-switch style) ——
   accountCardAdd: 'OAuth sign in to add account',
   // —— Paste-token import ——
@@ -210,7 +223,19 @@ export const zh: Record<CodeBuddySettingsKey, string> = {
   title: 'DSH CodeBuddy CLI Connect',
   // 设置页的标签栏与宿主自带的标签同排，故标签取短名，卡片标题保留完整产品名。
   tabLabel: 'CodeBuddy CLI',
-    backToConversation: '返回会话',
+  backToConversation: '返回会话',
+  entriesIntro: '选择本插件显示哪些入口。全部默认开启。',
+  entriesLoading: '正在读取入口配置…',
+  entriesSidebar: '侧边栏入口',
+  entriesSidebarHint: '在主侧边栏显示 CodeBuddy CLI 行，点击打开本页。',
+  entriesSettings: '设置弹窗入口',
+  entriesSettingsHint: '始终开启——这是能把其他入口重新打开的入口。',
+  entriesLocked: '始终开启',
+  entriesPlugins: '插件页配置入口',
+  entriesPluginsHint: '在插件页本插件卡片里显示配置区块。',
+  entriesSaved: '已保存。',
+  entriesFailed: '保存失败：',
+  entriesReloadNote: '入口在启动时注册，改动后需要刷新页面才生效。',
   intro: '在 DSH 中直接使用 CodeBuddy CLI 包含的模型，开箱即用，无需额外配置。',
   expand: '展开',
   collapse: '收起',
@@ -284,6 +309,7 @@ export const zh: Record<CodeBuddySettingsKey, string> = {
   tabModels: '可选模型',
   tabCreditStats: '积分统计',
   tabRemaining: '剩余积分',
+  tabEntries: '入口',
   // —— 账号卡片（workbuddy-switch 同款） ——
   accountCardAdd: '扫码登录添加账号',
   // —— 粘贴 Token 导入 ——

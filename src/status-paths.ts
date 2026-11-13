@@ -25,6 +25,46 @@ export const CODEBUDDY_MODELS_PATH = '/plugins/dsh-codebuddy-cli/enabled-models'
 export const CODEBUDDY_DOCK_PREFERENCE_PATH = '/plugins/dsh-codebuddy-cli/dock-preference'
 
 /**
+ * The entry switches route: GET reads, POST writes.
+ *
+ * Declared next to the other route paths so every address this plugin serves is
+ * in one place; the shape it carries is `CodeBuddyEntrySwitches` below.
+ */
+export const CODEBUDDY_ENTRY_SWITCHES_PATH = '/plugins/dsh-codebuddy-cli/entry-switches'
+
+/**
+ * The three built-in entry points, each independently switchable.
+ *
+ * Every field defaults to `true`: an untouched install shows all three, which is
+ * what it did before these switches existed. `false` means "do not register",
+ * because leaving a registration in place only to hide it still costs the host a
+ * slot entry (the sidebar row would occupy a line in the host's own list).
+ */
+export interface CodeBuddyEntrySwitches {
+  /**
+   * Always `true`, and not switchable.
+   *
+   * This row is the recovery path: with it off *and* the sidebar row off, no
+   * surface would be left that could turn either back on, so the plugin would be
+   * unreachable short of a reinstall. The host therefore reports it as on and
+   * rejects an attempt to set it false; the field stays in the payload so the
+   * client reads one stable shape.
+   */
+  settingsSection: boolean
+  /** The main sidebar row and the `main` panel behind it. */
+  sidebarPanel: boolean
+  /** The configuration block on the Plugins page (bundle + row views). */
+  pluginsConfig: boolean
+}
+
+/** All three on — what an install without a stored preference gets. */
+export const DEFAULT_ENTRY_SWITCHES: CodeBuddyEntrySwitches = {
+  settingsSection: true,
+  sidebarPanel: true,
+  pluginsConfig: true,
+}
+
+/**
  * One piece of the composer credit line.
  *
  * Declared here rather than imported from `index.ts` because this module is the

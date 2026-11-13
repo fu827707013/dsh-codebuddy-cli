@@ -22,6 +22,7 @@ import { ensureClientIdentity } from './upstream.ts'
 import { installSettingsSectionCompat, resolveSettingsNamespaceCompat } from './settings-compat.ts'
 import { CODEBUDDY_DOCK_SEGMENTS } from './status-paths.ts'
 import type { CodeBuddyDockSegment } from './status-paths.ts'
+import type { CodeBuddyEntrySwitches } from './status-paths.ts'
 
 export { CODEBUDDY_PROVIDER, CODEBUDDY_STREAM_IDLE_TIMEOUT_MS, createCodeBuddyAdapter, type CodeBuddyAdapter } from './adapter.ts'
 export { createCodeBuddyShim, type CodeBuddyShim } from './shim.ts'
@@ -127,11 +128,17 @@ export type DockSegment = CodeBuddyDockSegment
 /**
  * The segments a document that never set `dockSegments` renders.
  *
- * Provider is on because it is the only place the provider name appears;
- * `credit` is the row's reason to exist. Model is off because the composer's
- * picker already shows it.
+ * Credit only. The row shares `conversation.composer.dock` with the host's own
+ * session-stats strip, so every extra segment squeezes the rounds/token figures
+ * toward ellipsis. Provider and model are both obtainable elsewhere — the
+ * composer's model picker sits directly under this row and shows the model, and
+ * the selected provider is what makes this row appear at all — so repeating them
+ * here spends the shared width on information the reader already has (#14).
+ *
+ * An operator who wants them back enables them in the card's dock settings;
+ * this constant only decides what an untouched install looks like.
  */
-export const DEFAULT_DOCK_SEGMENTS: DockSegment[] = ['credit', 'provider']
+export const DEFAULT_DOCK_SEGMENTS: DockSegment[] = ['credit']
 
 /** Plugin configuration. */
 export interface Config {  /** Explicit CodeBuddy CLI auth-file path, overriding env and platform defaults. */
@@ -177,6 +184,10 @@ export interface Config {  /** Explicit CodeBuddy CLI auth-file path, overriding
    * which is a legitimate choice rather than a misconfiguration.
    */
   dockSegments?: DockSegment[]
+  /** Whether the main sidebar renders the CodeBuddy CLI row and its panel. */
+  showSidebarPanel?: boolean
+  /** Whether the Plugins page shows the bundle/row configuration for this plugin. */
+  showPluginsConfig?: boolean
 }
 
 /**
@@ -231,6 +242,14 @@ export const Config: z<Config> = z.object({
   dockSegments: z.array(z.union(DOCK_SEGMENTS.map((segment) => z.const(segment))))
     .description('Pieces shown in the composer credit line, in render order (default: credit + provider)')
     .default(DEFAULT_DOCK_SEGMENTS)
+    .volatile(),
+  showSidebarPanel: z.boolean()
+    .description('Show the CodeBuddy CLI entry in the main sidebar')
+    .default(true)
+    .volatile(),
+  showPluginsConfig: z.boolean()
+    .description('Show the CodeBuddy CLI configuration on the Plugins page')
+    .default(true)
     .volatile(),
 }) as unknown as z<Config>
 
@@ -319,6 +338,44 @@ export function apply(ctx: Context, rawConfig: Config): void {
     return true
   }
 
+  /**
+   * Which built-in entry points render.
+   *
+   * `sidebarPanel` and `pluginsConfig` are read from the stored preference and
+   * default to `true`, so a settings document written before these switches
+   * existed keeps showing every surface. `settingsSection` is always `true`: it
+   * is the row that can re-enable the others, so it is never off.
+   *
+   * The client reads this through the host route rather than the settings
+   * document because the client bundle has no settings access of its own.
+   */
+  const entrySwitches = (): CodeBuddyEntrySwitches => {
+    const stored = current()
+    return {
+      // Not stored, deliberately: this row is the only surface that can turn the
+      // others back on, so it is never off. See `CodeBuddyEntrySwitches`.
+      settingsSection: true,
+      sidebarPanel: stored.showSidebarPanel !== false,
+      pluginsConfig: stored.showPluginsConfig !== false,
+    }
+  }
+
+  const setEntrySwitches = async (patch: Partial<CodeBuddyEntrySwitches>): Promise<boolean> => {
+    const settings = ctx.get('settings')
+    if (settings === undefined) return false
+    // Map the client-facing names onto their schema fields; only the keys the
+    // caller actually sent are written, so one switch never resets another.
+    // `settingsSection` is intentionally absent: the settings row hosts the only
+    // recovery path, so the host refuses to store it as off. The route rejects
+    // such a request explicitly rather than dropping the field silently.
+    const update: Record<string, boolean> = {}
+    if (patch.sidebarPanel !== undefined) update['showSidebarPanel'] = patch.sidebarPanel
+    if (patch.pluginsConfig !== undefined) update['showPluginsConfig'] = patch.pluginsConfig
+    if (Object.keys(update).length === 0) return false
+    await settings.update(settingsCompatNamespace(ctx), update)
+    return true
+  }
+
   // Same-origin status route backing the Plugin-configuration card; the
   // webServer service is optional (a headless profile serves no browser).
   ctx.inject(['webServer'], webCtx => registerCodeBuddyStatusRoute(webCtx, {
@@ -331,6 +388,8 @@ export function apply(ctx: Context, rawConfig: Config): void {
     setShowDockOnOtherProviders,
     dockSegments,
     setDockSegments,
+    entrySwitches,
+    setEntrySwitches,
     settingsWritable: () => ctx.get('settings') !== undefined,
     checkIn: credential => client.checkIn(credential),
     refreshToken: credential => client.refreshToken(credential),

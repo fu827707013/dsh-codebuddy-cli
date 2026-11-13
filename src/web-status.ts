@@ -32,6 +32,8 @@ import {
   CODEBUDDY_DELETE_ACCOUNT_PATH,
   CODEBUDDY_CREDIT_STATS_PATH,
   CODEBUDDY_IMPORT_ACCOUNT_PATH,
+  CODEBUDDY_ENTRY_SWITCHES_PATH,
+  DEFAULT_ENTRY_SWITCHES,
 } from './status-paths.ts'
 import type {
   CodeBuddyCheckInOutcome,
@@ -50,6 +52,7 @@ import type {
   CodeBuddyWebUsageDaily,
   CodeBuddyWebUsageRow,
   CodeBuddyImportAccountResult,
+  CodeBuddyEntrySwitches,
 } from './status-paths.ts'
 
 export {
@@ -62,6 +65,7 @@ export {
   CODEBUDDY_DELETE_ACCOUNT_PATH,
   CODEBUDDY_CREDIT_STATS_PATH,
   CODEBUDDY_IMPORT_ACCOUNT_PATH,
+  CODEBUDDY_ENTRY_SWITCHES_PATH,
 } from './status-paths.ts'
 export type {
   CodeBuddyWebStatus,
@@ -106,6 +110,17 @@ export interface CodeBuddyStatusRouteOptions {
   dockSegments?: () => readonly DockSegment[] | undefined
   /** Persist the dock segments; false when no settings provider is attached. */
   setDockSegments?: (value: readonly DockSegment[]) => Promise<boolean>
+  /**
+   * Read which built-in entry points render.
+   *
+   * The client half needs this before it registers anything: a disabled entry
+   * must not be registered at all, because a hidden-but-registered sidebar row
+   * still occupies the host's list. Absent means "all three on", matching an
+   * install that predates the switches.
+   */
+  entrySwitches?: () => CodeBuddyEntrySwitches
+  /** Persist entry switches; false when no settings provider is attached. */
+  setEntrySwitches?: (value: Partial<CodeBuddyEntrySwitches>) => Promise<boolean>
   /** Whether a settings provider is attached and could accept a write. */
   settingsWritable?: () => boolean
   /**
@@ -755,6 +770,11 @@ export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatus
       path: CODEBUDDY_DOCK_PREFERENCE_PATH,
       handler: codeBuddyDockPreferenceHandler(deps),
     })
+    const disposeEntrySwitches = ctx.webServer.register({
+      kind: 'exact',
+      path: CODEBUDDY_ENTRY_SWITCHES_PATH,
+      handler: codeBuddyEntrySwitchesHandler(deps),
+    })
     const disposeCheckIn = ctx.webServer.register({
       kind: 'exact',
       path: CODEBUDDY_CHECKIN_PATH,
@@ -794,6 +814,7 @@ export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatus
       dispose()
       disposeModels()
       disposeDockPreference()
+      disposeEntrySwitches()
       disposeCheckIn()
       disposeLoginStart()
       disposeLoginPoll()
@@ -803,6 +824,87 @@ export function registerCodeBuddyStatusRoute(ctx: Context, deps: CodeBuddyStatus
       disposeCreditStats()
     }
   }, 'dsh-codebuddy-cli: Web status route')
+}
+
+/**
+ * GET/POST the three built-in entry switches.
+ *
+ * The client half calls GET once at startup and registers only the surfaces it
+ * is told to; POST comes from the panel's own switches tab. This lives on the
+ * host rather than in localStorage because the client entry registers slots in
+ * `apply()`, before any component renders — the decision has to be available
+ * before registration, and a host-side setting also keeps the choice consistent
+ * across browsers and DSH profiles.
+ */
+function codeBuddyEntrySwitchesHandler(
+  deps: CodeBuddyStatusRouteOptions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    const read = deps.entrySwitches
+    if (read === undefined) {
+      json(res, 501, { error: 'settings-not-available' })
+      return
+    }
+    if (req.method === 'GET') {
+      json(res, 200, { ...DEFAULT_ENTRY_SWITCHES, ...read(), settingsWritable: deps.settingsWritable?.() === true })
+      return
+    }
+    if (req.method !== 'POST') {
+      json(res, 405, { error: 'method not allowed' })
+      return
+    }
+    if (!checkLoopbackPost(req, res)) return
+    const write = deps.setEntrySwitches
+    if (write === undefined) {
+      json(res, 501, { error: 'settings-not-writable' })
+      return
+    }
+    let body: unknown
+    try {
+      body = JSON.parse(await readBody(req))
+    } catch {
+      json(res, 400, { error: 'expected {"settingsSection"?:boolean,"sidebarPanel"?:boolean,"pluginsConfig"?:boolean}' })
+      return
+    }
+    if (typeof body !== 'object' || body === null) {
+      json(res, 400, { error: 'expected an object' })
+      return
+    }
+    const record = body as Record<string, unknown>
+    // The settings row is the recovery path — it is what turns the others back
+    // on — so the host refuses to switch it off rather than letting an operator
+    // (or a stray script) lock every surface out of reach.
+    if (record['settingsSection'] === false) {
+      json(res, 400, {
+        error: 'settingsSection cannot be turned off: it is the only entry that can re-enable the others',
+      })
+      return
+    }
+    const patch: Partial<CodeBuddyEntrySwitches> = {}
+    let touched = 0
+    for (const key of ['sidebarPanel', 'pluginsConfig'] as const) {
+      const value = record[key]
+      if (value === undefined) continue
+      // Each field is validated on its own so one bad value never half-applies
+      // the others.
+      if (typeof value !== 'boolean') {
+        json(res, 400, { error: key + ' must be a boolean' })
+        return
+      }
+      patch[key] = value
+      touched += 1
+    }
+    if (touched === 0) {
+      json(res, 400, { error: 'no known switch in the body' })
+      return
+    }
+    const ok = await write(patch)
+    if (!ok) {
+      json(res, 501, { error: 'settings-not-writable' })
+      return
+    }
+    json(res, 200, { ...DEFAULT_ENTRY_SWITCHES, ...read(), settingsWritable: true })
+  }
 }
 
 /**

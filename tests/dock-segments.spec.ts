@@ -30,11 +30,11 @@ describe('dock segment vocabulary', () => {
     expect([...CLIENT_DEFAULT]).toEqual([...HOST_DEFAULT])
   })
 
-  it('defaults to credit + provider, never model or rate', () => {
+  it('defaults to credit only, never provider/model/rate (#14)', () => {
     // Model and rate already appear in the composer's own model picker, so
     // repeating them squeezes the session-stats segments into ellipsis. Provider
     // is the opposite case: the picker never shows where the model came from.
-    expect([...HOST_DEFAULT]).toEqual(['credit', 'provider'])
+    expect([...HOST_DEFAULT]).toEqual(['credit'])
     expect(HOST_DEFAULT).not.toContain('model')
     expect(HOST_DEFAULT).not.toContain('rate')
   })
@@ -46,19 +46,35 @@ describe('dock segment vocabulary', () => {
     }
   })
 
-  it('builds the default line from credit then provider, in that order', () => {
-    const line = buildDockLine(
+  it('renders only credit from the default document (#14)', () => {
+    const signedIn = buildDockLine(
+      { lastUsed: null, next: { provider: 'codebuddy-cli', model: 'glm-5.3' } },
+      { phase: 'ok', value: { status: 'signed-in', credits: { total: 1_642, accounts: [{ packageName: '主包', remain: 1_642, size: 2_000 }] } } },
+    )
+    const keys = signedIn.segments
+      .filter(segment => segment.kind === 'copy')
+      .map(segment => (segment as { key: string }).key)
+    // Credit is the row's reason to exist; provider and model are both visible
+    // elsewhere in the composer, and repeating them spends the width this plugin
+    // shares with the host's session-stats strip.
+    // The credit segment carries its own keys (creditTotalCompact / creditSignedOut
+    // / …), not a `dockCredits` one — assert the absence of the copy segments that
+    // the default no longer enables.
+    expect(keys.some(k => k.startsWith('credit'))).toBe(true)
+    expect(keys).not.toContain('dockProvider')
+    expect(keys).not.toContain('dockModel')
+
+    // Signed out there is no figure to show, so the row renders nothing at all
+    // rather than falling back to a segment the default no longer includes.
+    const signedOut = buildDockLine(
       { lastUsed: null, next: { provider: 'codebuddy-cli', model: 'glm-5.3' } },
       { phase: 'ok', value: { status: 'signed-out' } },
     )
-    // `credit` drops out on its own when there is no signed-in credit figure, so
-    // the default document renders the provider piece alone here — the point is
-    // that nothing about model/rate leaks in.
-    const keys = line.segments
+    const outKeys = signedOut.segments
       .filter(segment => segment.kind === 'copy')
       .map(segment => (segment as { key: string }).key)
-    expect(keys).toContain('dockProvider')
-    expect(keys).not.toContain('dockModel')
+    expect(outKeys).not.toContain('dockProvider')
+    expect(outKeys).not.toContain('dockModel')
   })
 
   it('honours an explicit empty selection instead of falling back to the default', () => {

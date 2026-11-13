@@ -1,9 +1,8 @@
 /** Browser half: CodeBuddy account status on the DSH Plugins page. */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
-// Type-only: the settings shell declares the `settings.plugins.tab` slot in its
-// own SlotMap merge (ui-settings/src/client/contract/slots.ts) precisely so tab
+// Type-only: the settings shell declares `settings.section` in its own SlotMap
+// merge (ui-settings/src/client/contract/slots.ts) precisely so section
 // contributors can type against it without depending on one another. Without
 // this import the name is not part of the slot union and `register` rejects it.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -26,14 +25,14 @@ import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: declares `main`, the keyed panel slot the sidebar row selects.
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import { CodeBuddyPluginCard } from './CodeBuddyPluginCard.tsx'
 import type { CodeBuddyPluginCardInjected } from './CodeBuddyPluginCard.tsx'
 import { CodeBuddyConfigPage } from './CodeBuddyConfigPage.tsx'
 import type { CodeBuddyConfigPageInjected } from './CodeBuddyConfigPage.tsx'
-import { CodeBuddyPanel, CodeBuddyPanelGlyph } from './CodeBuddyPanel.tsx'
+import { CodeBuddyPanel, CodeBuddyPanelGlyph, CodeBuddySettingsPage } from './CodeBuddyPanel.tsx'
 import type { CodeBuddyPanelInjected } from './CodeBuddyPanel.tsx'
 import { CodeBuddyCreditDock } from './CodeBuddyCreditDock.tsx'
 import type { CodeBuddyCreditDockInjected } from './CodeBuddyCreditDock.tsx'
+import { readEntrySwitches } from './entry-switches.ts'
 import { en, zh } from './locales.ts'
 import type { CodeBuddySettingsKey } from './locales.ts'
 
@@ -117,52 +116,124 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-codebuddy-cli: settings copy')
   const t = ctx.locale.bind(namespace) as CodeBuddyPluginCardInjected['t']
 
-  // Settings → Plugins tab. `dsh-client-ui-settings-plugins` declares and renders
-  // `settings.plugins.tab` on every host this release supports, so this is a live
-  // surface wherever that section is mounted. A registrant whose slot is never
-  // declared is simply never rendered, so it costs nothing where the section is
-  // absent — but it must NOT be deleted as cleanup: on such a host it is the only
-  // reachable configuration card.
-  attempt('settings tab', () => {
-    ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
-      name: 'settings.plugins.tab',
-      id: 'codebuddy-cli',
-      order: 30,
-      // The slot contract documents `label` as the registrant-localized tab text;
-      // without it the strip renders an unlabelled blank tab. The tab shares its
-      // row with the host's own tabs, so it uses the short product name.
-      label: () => t('tabLabel'),
-      locale: namespace,
-      inject: (): CodeBuddyPluginCardInjected => ({ t }),
-    }, CodeBuddyPluginCard))
-  })
+  /**
+   * Register the switchable surfaces once the host has answered.
+   *
+   * `apply()` cannot await, so the entries a switch controls are registered from
+   * a resolved promise. Two things make that safe:
+   *
+   * - The read is wrapped in `ctx.effect`, so if the fiber unloads while the
+   *   fetch is still in flight the callback never touches a disposed context
+   *   (`slots.inject` throws `INACTIVE_EFFECT` there) and the registrations are
+   *   torn down with everything else belonging to this plugin.
+   * - `inject` waits for its declaring package regardless of when it is called,
+   *   so a slot registered a tick late still lands in the ledger long before a
+   *   user can open a panel.
+   *
+   * The alternative — register everything and hide the markup — is NOT
+   * equivalent: a hidden sidebar row still occupies a line in the host's own
+   * list, which is exactly what the switch exists to remove.
+   *
+   * A read failure yields `ALL_ENTRIES_ON`, so a headless or unreachable host
+   * shows the full plugin rather than nothing.
+   */
+  ctx.effect(() => {
+    let live = true
+    void readEntrySwitches().then((entries) => {
+      if (!live) return
+      // The DSH-standard configuration surfaces on the Plugins page. Both slots are
+      // keyed: the bundle key is the package name, the row key is
+      // `<package>#<row id>` with the row id as cordis.patch.yml declares it.
+      if (entries.pluginsConfig) {
+        attempt('bundle configuration page', () => {
+          ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+            name: 'plugins.bundle.config',
+            key: 'dsh-codebuddy-cli',
+            locale: namespace,
+            inject: (): CodeBuddyConfigPageInjected => ({ t }),
+          }, CodeBuddyConfigPage))
+        })
 
-  // Settings → <first-level nav row>. A `{ kind: 'list', scope: 'root' }` slot
-  // declared by `dsh-client-ui-settings-general` — the same host package that
-  // draws the settings shell, so unlike `settings.plugins.tab` (declared by
-  // `ui-settings-plugins`, which a third-party bundle can disable) this surface
-  // exists on every host that has settings at all. That difference is the whole
-  // reason this registration exists: on a deployment where `ui-settings-plugins`
-  // is off, the plugins tab is never declared and its callback never runs.
-  //
-  // `order: 50` sits after the host's own sections (account/general/models/
-  // plugins) and after `dsh-market` at 40; the list is sorted, so a collision
-  // would only affect ordering, never reachability.
-  attempt('settings section', () => {
-    ctx.slots.inject('settings.section', () => ctx.slots.register({
-      name: 'settings.section',
-      id: 'codebuddy-cli',
-      order: 50,
-      label: () => t('tabLabel'),
-      locale: namespace,
-      inject: (): CodeBuddyPluginCardInjected => ({ t }),
-    }, CodeBuddyPluginCard))
-  })
+        attempt('row configuration page', () => {
+          ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
+            name: 'plugins.row.config',
+            key: 'dsh-codebuddy-cli#llm-codebuddy-cli',
+            locale: namespace,
+            inject: (): CodeBuddyConfigPageInjected => ({ t }),
+          }, CodeBuddyConfigPage))
+        })
+      }
+
+      // Settings → <first-level nav row>. A `{ kind: 'list', scope: 'root' }` slot
+      // declared by `dsh-client-ui-settings-general` — the same host package that
+      // draws the settings shell, so this surface exists on every host that has
+      // settings at all. That is why it is the reachable configuration path on a
+      // deployment where `ui-settings-plugins` is off.
+      //
+      // `settings.plugins.tab` is deliberately NOT registered any more: two
+      // configuration UIs competed for the same job, and on the deployment shape
+      // that motivated #17 the declaring package was disabled anyway, so the tab
+      // never rendered there.
+      if (entries.settingsSection) {
+        attempt('settings section', () => {
+          ctx.slots.inject('settings.section', () => ctx.slots.register({
+            name: 'settings.section',
+            id: SIDEBAR_PANEL_ID,
+            order: 50,
+            label: () => t('tabLabel'),
+            locale: namespace,
+            // `SettingsSectionOwnerProps` supplies `close`; this page deliberately
+            // does not draw a back control because the shell already renders its own
+            // title and close button around every section.
+            inject: (): CodeBuddyPluginCardInjected => ({ t }),
+          }, CodeBuddySettingsPage))
+        })
+      }
+
+      // Sidebar row + its `main` panel (#17). This pair is the route that survives
+      // a deployment disabling `ui-settings-plugins`: `sidebar.panellist` is
+      // declared by `ui-sidebar` and `main` by `ui-layout`, both host modules. They
+      // register together because a row with no panel behind it is a dead control,
+      // and a panel with no row is unreachable — the host matches them by id.
+      if (entries.sidebarPanel) {
+        attempt('sidebar panel', () => {
+          ctx.slots.inject('main', () => ctx.slots.register({
+            name: 'main',
+            key: SIDEBAR_PANEL_ID,
+            locale: namespace,
+            inject: (): CodeBuddyPanelInjected => ({
+              t,
+              // The host's `MainPanel` renders this slot with no chrome, so the
+              // panel draws its own way back. `ui-layout` keeps the conversation on
+              // the null panel id, which is what `ui-sidebar` itself uses.
+              close: () => { ctx.layout.selectPanel(null) },
+            }),
+          }, CodeBuddyPanel))
+
+          ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+            name: 'sidebar.panellist',
+            id: SIDEBAR_PANEL_ID,
+            // After the host's own rows, before the "more" launcher's neighbours.
+            order: 10,
+            label: () => t('tabLabel'),
+            locale: namespace,
+            // The glyph slot receives `{ size, active }`; the row renders this
+            // inside an aria-hidden span and supplies its own name from `label`.
+          }, CodeBuddyPanelGlyph))
+        })
+      }
+    })
+    // The registrations themselves are owned by `slots`, which disposes them with
+    // the fiber; this disposer only stops an in-flight read from writing into a
+    // context that is already going away.
+    return () => { live = false }
+  }, 'dsh-codebuddy-cli: entry switches')
 
   // The composer credit line rides the same locale namespace (its keys are a
   // subset) and the session-scoped `conversation.composer.dock` list slot — the
-  // slot the host's own stats strip occupies, so the credit figure sits directly
-  // under the input box beside the token statistics.
+  // slot the host's own stats strip occupies, so the figure sits directly under
+  // the input box beside the token statistics. Not switchable: it is a status
+  // readout rather than a configuration entry.
   attempt('composer dock', () => {
     const creditT = t as unknown as CodeBuddyCreditDockInjected['t']
     ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
@@ -172,64 +243,5 @@ export function apply(ctx: ClientContext): void {
       locale: namespace,
       inject: (): CodeBuddyCreditDockInjected => ({ t: creditT }),
     }, CodeBuddyCreditDock))
-  })
-
-  // The DSH-standard configuration surfaces on the Plugins page. Both slots are
-  // keyed: the bundle key is the package name, the row key is
-  // `<package>#<row id>` with the row id as cordis.patch.yml declares it. DSH
-  // renders the bundle configuration on the bundle's detail page between its
-  // description and its components, and the row configuration on the row page the
-  // list's configure control opens. The same body the settings card expands renders
-  // in both views; `view: 'summary'` renders nothing because DSH only asks keyed
-  // configuration entries for the full `page` view.
-  attempt('bundle configuration page', () => {
-    ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
-      name: 'plugins.bundle.config',
-      key: 'dsh-codebuddy-cli',
-      locale: namespace,
-      inject: (): CodeBuddyConfigPageInjected => ({ t }),
-    }, CodeBuddyConfigPage))
-  })
-
-  attempt('row configuration page', () => {
-    ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
-      name: 'plugins.row.config',
-      key: 'dsh-codebuddy-cli#llm-codebuddy-cli',
-      locale: namespace,
-      inject: (): CodeBuddyConfigPageInjected => ({ t }),
-    }, CodeBuddyConfigPage))
-  })
-
-  // Sidebar row + its `main` panel (#17). This pair is the route that survives a
-  // deployment disabling `ui-settings-plugins`: `sidebar.panellist` is declared by
-  // `ui-sidebar` and `main` by `ui-layout`, both host modules. The two are
-  // registered together because a sidebar row with no panel behind it would be a
-  // dead control, and a panel with no row would be unreachable — the host matches
-  // them by id (`selectPanel(SIDEBAR_PANEL_ID)` reads the `main` entry whose
-  // `key` equals it).
-  attempt('sidebar panel', () => {
-    ctx.slots.inject('main', () => ctx.slots.register({
-      name: 'main',
-      key: SIDEBAR_PANEL_ID,
-      locale: namespace,
-      inject: (): CodeBuddyPanelInjected => ({
-        t,
-        // The host's `MainPanel` renders this slot with no chrome, so the panel
-        // has to draw its own way back. `ui-layout` keeps the conversation on the
-        // null panel id, which is what `ui-sidebar` itself uses to deselect.
-        close: () => { ctx.layout.selectPanel(null) },
-      }),
-    }, CodeBuddyPanel))
-
-    ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-      name: 'sidebar.panellist',
-      id: SIDEBAR_PANEL_ID,
-      // After the host's own rows, before the "more" launcher's neighbours.
-      order: 10,
-      label: () => t('tabLabel'),
-      locale: namespace,
-      // The glyph slot receives `{ size, active }`; the row renders this inside an
-      // aria-hidden span and supplies its own accessible name from `label`.
-    }, CodeBuddyPanelGlyph))
   })
 }

@@ -16,7 +16,7 @@ import type { CodeBuddyCreditKey } from '../src/client/locales.ts'
 /**
  * Every segment, for the cases that assert the full line.
  *
- * The default (`credit` + `provider`) is asserted separately below; these
+ * The default (`credit` alone, #14) is asserted separately below; these
  * fixtures keep the older expectations readable without pretending the default
  * still renders the model and the rate.
  */
@@ -297,12 +297,12 @@ describe('buildDockLine', () => {
 
   // #14 asked for the line to stop repeating what the model picker already
   // shows. The provider stays because that picker never names it.
-  it('renders only credit and provider by default', () => {
+  it('renders only credit by default (#14)', () => {
     const line = buildDockLine({
       lastUsed: { provider: CODEBUDDY_PROVIDER_ID, model: 'glm-5.3' },
       next: null,
     }, withCredit)
-    expect(render(line.segments)).toBe('Credits 1,642 · Provider CodeBuddy')
+    expect(render(line.segments)).toBe('Credits 1,642')
     // The rate is still resolved for the details panel; it is just not printed.
     expect(line.rate).toEqual({ rate: 'x0.79', name: 'GLM-5.3' })
   })

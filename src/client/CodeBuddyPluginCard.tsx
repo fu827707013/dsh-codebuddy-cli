@@ -26,6 +26,7 @@ import type { CodeBuddySettingsKey } from './locales.ts'
 import { DEFAULT_DOCK_SEGMENTS } from './credit-line.ts'
 import css from './CodeBuddyPluginCard.module.css'
 import { AccountCards } from './AccountCard.tsx'
+import { CodeBuddyEntriesTab } from './CodeBuddyEntriesTab.tsx'
 import { CreditStatsPanel, AccountFilterMenu } from './CreditStatsPanel.tsx'
 
 /** Localized copy injected by the browser-plugin registration. */
@@ -276,7 +277,7 @@ function ModelSelection({ selection, onSaved, t }: {
 }
 
 /** The horizontal tab names rendered in the card body. */
-type CardTab = 'accounts' | 'models' | 'stats' | 'remaining'
+type CardTab = 'accounts' | 'models' | 'stats' | 'remaining' | 'entries'
 
 /**
  * The composer-line preference: whether the row shows on a foreign provider,
@@ -541,6 +542,11 @@ export function CodeBuddyConfigBody({ t }: { t: CodeBuddyPluginCardInjected['t']
     { key: 'models', label: t('tabModels') },
     { key: 'stats', label: t('tabCreditStats') },
     { key: 'remaining', label: t('tabRemaining') },
+    // The entry switches live here, as a fifth tab of the same strip, rather
+    // than in a second tab bar above it: one strip is what every other surface
+    // in this card uses, and a stacked pair read as two levels of navigation
+    // when there is really one.
+    { key: 'entries', label: t('tabEntries') },
   ]
 
   return (
@@ -674,6 +680,12 @@ export function CodeBuddyConfigBody({ t }: { t: CodeBuddyPluginCardInjected['t']
                   {signedIn && effectiveRemainingAccount !== null && remainingCredits !== undefined && remainingCredits.accounts.length === 0
                     ? <p className={css.bodyText}>{t('creditEmpty')}</p>
                     : null}
+                </div>
+              ) : null}
+
+              {tab === 'entries' ? (
+                <div role="tabpanel">
+                  <CodeBuddyEntriesTab t={t} />
                 </div>
               ) : null}
             </div>

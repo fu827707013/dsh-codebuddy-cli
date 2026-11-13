@@ -1011,3 +1011,115 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- Panel tabs (config / entries) ---- */
+
+/* ---- Entries tab ---- */
+
+.entries {
+  padding: 0 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.entriesLoading {
+  padding: 16px 20px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary, #666);
+}
+
+.entriesIntro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary, #666);
+}
+
+.entriesList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.entriesRow {
+  margin: 0;
+  padding: 0;
+}
+
+.entriesLabel {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.entriesLabel:hover {
+  background: var(--dsw-alias-bg-l2, rgba(0, 0, 0, 0.03));
+}
+
+.entriesCheckbox {
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  cursor: pointer;
+}
+
+.entriesText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.entriesTitle {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary, #111);
+}
+
+.entriesHint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary, #666);
+}
+
+.entriesError {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-error, #c62828);
+}
+
+.entriesSaved {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-state-success-primary, #2e7d32);
+}
+
+.entriesNote {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary, #666);
+  padding-top: 4px;
+  border-top: 1px solid var(--dsw-alias-border-l3, rgba(0, 0, 0, 0.08));
+}
+
+.entriesLocked {
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+  border-radius: 4px;
+  color: var(--dsw-alias-label-secondary, #666);
+  background: var(--dsw-alias-bg-l2, rgba(0, 0, 0, 0.06));
+  vertical-align: 1px;
+}

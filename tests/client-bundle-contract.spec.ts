@@ -27,9 +27,14 @@ try {
 const maybe = bundle === undefined ? describe.skip : describe
 
 maybe('built client bundle slot + icon contract', () => {
-  it('registers the current plugin-configuration slot name', () => {
-    // `settings.plugins.tab` is the Settings → Plugins tab this release supports.
-    expect(bundle).toContain('settings.plugins.tab')
+  it('no longer registers the retired settings.plugins.tab (#14)', () => {
+    // Two configuration UIs competed for the same job. The tab also only ever
+    // rendered where `ui-settings-plugins` was enabled, which is exactly the
+    // deployment that already had the Plugins-page card.
+    // Assert on the registration CALL, not on the raw string: the entry's
+    // comment explains why the tab was dropped and legitimately names it.
+    expect(bundle).not.toMatch(/name:\s*"settings\.plugins\.tab"/)
+    expect(bundle).not.toMatch(/inject\(\s*"settings\.plugins\.tab"/)
   })
 
   it('does not register the retired pre-0.1.7 slot name', () => {
@@ -57,7 +62,7 @@ maybe('built client bundle slot + icon contract', () => {
     // runs and the card is unreachable with nothing logged. `settings.section`
     // is declared by the settings SHELL itself, so it survives.
     expect(bundle).toContain('settings.section')
-    expect(bundle).toMatch(/id:\s*"codebuddy-cli"/)
+    expect(bundle).toMatch(/SIDEBAR_PANEL_ID/)
   })
 
   it('sizes the dock row to its content so segments off actually free width (#14)', () => {
@@ -122,8 +127,13 @@ maybe('built client bundle slot + icon contract', () => {
     expect(bundle).not.toContain('IconChevronDownOutline14')
   })
 
-  it('imports the current primitive icon name that the host actually exports', () => {
-    expect(bundle).toContain('IconChevronDownOutlineRegular')
+  it('never imports the retired size-suffixed icon names', () => {
+    // The collapsible card shell that used to own the chevron is no longer
+    // registered (the settings tab it lived in was removed in favour of the
+    // panel + section rows), so the surviving assertion is the negative one:
+    // none of the retired names may creep back in.
+    expect(bundle).not.toMatch(/IconChevronDownOutline\d+/)
+    expect(bundle).not.toMatch(/IconChevronDownOutlineRegular\d+/)
   })
 
   it('gates the dock row on the setting instead of hiding it unconditionally', () => {
@@ -148,8 +158,15 @@ maybe('built client bundle slot + icon contract', () => {
     // whole-bundle search would fail for the wrong reason.
     const source = bundle ?? ''
     expect(source).toContain('CodeBuddyConfigBody')
-    const body = source.slice(source.indexOf('function CodeBuddyConfigBody'))
-    const region = body.slice(0, body.indexOf('function CodeBuddyPluginCard'))
+    // Bound the region by the NEXT top-level function rather than by a named
+    // one: the collapsible shell that used to follow the body is no longer
+    // registered, and slicing to a missing marker silently yielded an empty
+    // region — a test that passes for the wrong reason is worse than none.
+    const start = source.indexOf('function CodeBuddyConfigBody')
+    expect(start).toBeGreaterThan(-1)
+    const after = source.slice(start + 'function CodeBuddyConfigBody'.length)
+    const nextFn = after.indexOf('function ')
+    const region = nextFn === -1 ? after : after.slice(0, nextFn)
     expect(region.length).toBeGreaterThan(0)
     expect(region).not.toMatch(/if \(!open\)/)
     expect(region).not.toMatch(/\[open,/)
@@ -158,9 +175,14 @@ maybe('built client bundle slot + icon contract', () => {
     expect(region).toMatch(/new AbortController\(\)/)
   })
 
-  it('keeps the collapsible card as a thin shell around the body', () => {
-    // The card owns `open` and the header; the body owns the data. Sharing one
-    // state between the two is what produced the regression above.
-    expect(bundle).toMatch(/open \? .*CodeBuddyConfigBody/)
+  it('renders the config body from both surviving entries', () => {
+    // The collapsible card shell that used to wrap the body is gone: the
+    // settings tab it lived in was removed, and the panel/section pages render
+    // the body directly. Both must still reach it, or the plugin would have a
+    // configuration UI with nothing in it.
+    const source = bundle ?? ''
+    expect(source).toMatch(/CodeBuddyConfigBody/)
+    expect(source).toContain('CodeBuddyPanel')
+    expect(source).toContain('CodeBuddySettingsPage')
   })
 })
